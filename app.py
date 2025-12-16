@@ -13,12 +13,17 @@ st.title('Tamarack Aerospace A320 Financial Model')
 st.sidebar.header('Key Assumptions')
 
 fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
-base_fuel_price = st.sidebar.slider('Base Fuel Price in 2028 ($/gal)', min_value=1.0, max_value=6.0, value=3.0, step=0.1)
+base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/gal)', min_value=1.0, max_value=6.0, value=3.0, step=0.1)
+block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=2800, step=100)
+base_fuel_burn_gal_per_hour = st.sidebar.slider('Base Fuel Burn (gal/hour)', min_value=700, max_value=1200, value=700, step=50)
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
-base_cogs = st.sidebar.slider('Base COGS per Kit in 2028 ($)', min_value=100000, max_value=800000, value=400000, step=10000)
+base_cogs = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($)', min_value=100000, max_value=800000, value=400000, step=10000)
 fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
 fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
+
+cert_duration_years = st.sidebar.slider('Certification Duration (Years)', min_value=0.25, max_value=5.0, value=2.0, step=0.25)
+cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
 
 inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=130, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
@@ -31,20 +36,24 @@ wacc = st.sidebar.slider('WACC (%)', min_value=0.0, max_value=30.0, value=11.5, 
 terminal_growth = st.sidebar.slider('Terminal Growth Rate (%)', min_value=-2.0, max_value=8.0, value=3.0, step=0.5) / 100
 
 # Install rates for first 4 quarters (first install year, e.g., 2028)
-st.sidebar.header('First Year Install Rates (Kits per Quarter)')
+st.sidebar.header('First-Year Install Rates (Kits per Quarter)')
 q1_installs = st.sidebar.slider('Q1 Installs', min_value=0, max_value=200, value=98, step=10)  # ~10/week * 13 weeks / 4 = approx
 q2_installs = st.sidebar.slider('Q2 Installs', min_value=0, max_value=200, value=98, step=10)
 q3_installs = st.sidebar.slider('Q3 Installs', min_value=0, max_value=200, value=98, step=10)
 q4_installs = st.sidebar.slider('Q4 Installs and beyond', min_value=0, max_value=200, value=96, step=10)  # Total ~390 for year
 
 # Fixed assumptions (from previous)
-block_hours = 2800
-base_fuel_burn_gal_per_hour = 640
 split_pct = fuel_savings_split_to_tamarack
 
 # Cert costs split (assuming even over 2026-2027)
-cert_2026 = cert_readiness_cost / 2
-cert_2027 = cert_readiness_cost / 2
+cert_spend_by_year = {}
+cert_spend_per_quarter = (float(cert_readiness_cost) / float(cert_duration_quarters)) if int(cert_duration_quarters) > 0 else 0.0
+for q in range(int(cert_duration_quarters)):
+    yr = 2026 + (q // 4)
+    cert_spend_by_year[yr] = cert_spend_by_year.get(yr, 0.0) + cert_spend_per_quarter
+
+revenue_start_year = 2026 + int(np.ceil(float(cert_duration_quarters) / 4.0))
+inventory_year = max(2026, revenue_start_year - 1)
 
 # OpEx fixed for simplicity (lean case)
 opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 2033: 15, 2034: 15, 2035: 15}
@@ -53,31 +62,32 @@ opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 20
 years = list(range(2026, 2036))  # 10 years
 
 assumptions_rows = [
-    {'Assumption': 'Annual Fuel Inflation', 'Value': f"{fuel_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base fuel price starting in 2028'},
-    {'Assumption': 'Base Fuel Price (2028)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Slider', 'Notes': 'Used as the base for inflated fuel price'},
-    {'Assumption': 'Annual COGS Inflation', 'Value': f"{cogs_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base COGS per kit starting in 2028'},
-    {'Assumption': 'Base COGS per Kit (2028)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': 'Used as the base for COGS inflation and 2027 inventory build'},
+    {'Assumption': 'Annual Fuel Inflation', 'Value': f"{fuel_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base fuel price starting in the first revenue year'},
+    {'Assumption': 'Base Fuel Price (First Revenue Year)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Slider', 'Notes': f"Base fuel price used in {revenue_start_year}"},
+    {'Assumption': 'Block Hours per Aircraft per Year', 'Value': f"{int(block_hours)}", 'Units': 'Hours', 'Type': 'Slider', 'Notes': 'Used to compute annual fuel spend'},
+    {'Assumption': 'Base Fuel Burn', 'Value': f"{int(base_fuel_burn_gal_per_hour)}", 'Units': 'Gal/hour', 'Type': 'Slider', 'Notes': 'Used to compute annual fuel spend'},
+    {'Assumption': 'Annual COGS Inflation', 'Value': f"{cogs_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base COGS per kit starting in the first revenue year'},
+    {'Assumption': 'Base COGS per Kit (First Revenue Year)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': f"Base COGS per kit used in {revenue_start_year}; also used for inventory build"},
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
     {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'},
-    {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': 'Used first to fund pre-2028 certification / inventory outflows'},
-    {'Assumption': 'Debt Raised', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': 'Drawn only if equity is exhausted pre-2028'},
+    {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; first revenue year is {revenue_start_year}"},
+    {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Used first to fund certification / inventory outflows prior to {revenue_start_year}"},
+    {'Assumption': 'Debt Raised', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Drawn only if equity is exhausted prior to {revenue_start_year}"},
     {'Assumption': 'Debt APR', 'Value': f"{debt_apr * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to outstanding debt balance'},
-    {'Assumption': 'Debt Term', 'Value': f"{debt_term_years}", 'Units': 'Years', 'Type': 'Slider', 'Notes': 'Debt amortizes annually beginning in 2028'},
+    {'Assumption': 'Debt Term', 'Value': f"{debt_term_years}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"Debt amortizes annually beginning in {revenue_start_year}"},
     {'Assumption': 'Income Tax Rate', 'Value': f"{tax_rate * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Taxes apply only when taxable income is positive'},
     {'Assumption': 'WACC', 'Value': f"{wacc * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used to discount unlevered free cash flows in DCF'},
     {'Assumption': 'Terminal Growth Rate', 'Value': f"{terminal_growth * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used for terminal value if WACC > terminal growth'},
-    {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'Purchased in 2027 at base COGS per kit'},
+    {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"Purchased in {inventory_year} at base COGS per kit"},
     {'Assumption': 'Total Addressable Market', 'Value': f"{int(tam_shipsets)}", 'Units': 'Shipsets', 'Type': 'Slider', 'Notes': 'Caps cumulative shipsets'},
-    {'Assumption': 'First-Year Install Rate (Q1)', 'Value': f"{int(q1_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
-    {'Assumption': 'First-Year Install Rate (Q2)', 'Value': f"{int(q2_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
-    {'Assumption': 'First-Year Install Rate (Q3)', 'Value': f"{int(q3_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
-    {'Assumption': 'First-Year Install Rate (Q4)', 'Value': f"{int(q4_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs; Q4 and after stabilize'},
-    {'Assumption': 'Block Hours per Aircraft per Year', 'Value': f"{int(block_hours)}", 'Units': 'Hours', 'Type': 'Hardwired', 'Notes': 'Used to compute annual fuel spend'},
-    {'Assumption': 'Base Fuel Burn', 'Value': f"{int(base_fuel_burn_gal_per_hour)}", 'Units': 'Gal/hour', 'Type': 'Hardwired', 'Notes': 'Used to compute annual fuel spend'},
+    {'Assumption': 'First-Year Install Rate (Q1)', 'Value': f"{int(q1_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
+    {'Assumption': 'First-Year Install Rate (Q2)', 'Value': f"{int(q2_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
+    {'Assumption': 'First-Year Install Rate (Q3)', 'Value': f"{int(q3_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
+    {'Assumption': 'First-Year Install Rate (Q4)', 'Value': f"{int(q4_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
     {'Assumption': 'Model Years', 'Value': f"{years[0]}-{years[-1]}", 'Units': 'Years', 'Type': 'Hardwired', 'Notes': 'Annual model projection period'},
-    {'Assumption': 'Certification Spend Timing', 'Value': '50% in 2026, 50% in 2027', 'Units': '', 'Type': 'Hardwired', 'Notes': 'Certification spend split evenly across 2026-2027'},
-    {'Assumption': 'Install Ramp (2029 New Installs)', 'Value': '910', 'Units': 'Kits', 'Type': 'Hardwired', 'Notes': 'Fixed ramp year after first installs'},
-    {'Assumption': 'Install Ramp (2030+ New Installs)', 'Value': '1040', 'Units': 'Kits', 'Type': 'Hardwired', 'Notes': 'Steady-state new installs from 2030 onward'},
+    {'Assumption': 'Certification Spend Schedule', 'Value': ', '.join([f"{k}:{v:.1f}" for k, v in cert_spend_by_year.items()]), 'Units': '$M', 'Type': 'Calculated', 'Notes': 'Evenly allocated per quarter starting in 2026 based on certification duration'},
+    {'Assumption': 'Install Ramp (Year 2 New Installs)', 'Value': '910', 'Units': 'Kits', 'Type': 'Hardwired', 'Notes': f"Applies in {revenue_start_year + 1}"},
+    {'Assumption': 'Install Ramp (Year 3+ New Installs)', 'Value': '1040', 'Units': 'Kits', 'Type': 'Hardwired', 'Notes': f"Applies in {revenue_start_year + 2} and beyond"},
     {'Assumption': 'OpEx Schedule', 'Value': ', '.join([f"{k}:{v}" for k, v in opex.items()]), 'Units': '$M/year', 'Type': 'Hardwired', 'Notes': 'OpEx by year; defaults to 15 after 2035'},
     {'Assumption': 'Taxes Floor', 'Value': 'Taxes = max(0, taxable income) * tax rate', 'Units': '', 'Type': 'Hardwired', 'Notes': 'No tax benefit modeled for losses'},
     {'Assumption': 'Terminal Value Condition', 'Value': 'Only computed if WACC > terminal growth', 'Units': '', 'Type': 'Hardwired', 'Notes': 'Otherwise terminal value treated as 0'},
@@ -104,22 +114,22 @@ else:
     annual_debt_payment = float(debt_amount) * float(debt_apr) / (1 - (1 + float(debt_apr)) ** (-float(debt_term_years)))
 
 for yr in years:
-    if yr < 2028:
+    if yr < revenue_start_year:
         new_installs = 0
         revenue = 0
         cogs = 0
-        inventory = 0 if yr == 2026 else inventory_kits_pre_install * base_cogs / 1e6
-        capex = cert_2026 if yr == 2026 else cert_2027
+        inventory = (inventory_kits_pre_install * base_cogs / 1e6) if yr == inventory_year else 0
+        capex = float(cert_spend_by_year.get(yr, 0.0))
     else:
-        year_idx = yr - 2028
+        year_idx = yr - revenue_start_year
         fuel_price = base_fuel_price * (1 + fuel_inflation) ** year_idx
         annual_fuel_spend = block_hours * base_fuel_burn_gal_per_hour * fuel_price
         annual_saving = annual_fuel_spend * fuel_saving_pct
         rev_per_shipset = annual_saving * split_pct  # in $
         
-        if yr == 2028:
+        if yr == revenue_start_year:
             new_installs = q1_installs + q2_installs + q3_installs + q4_installs
-        elif yr == 2029:
+        elif yr == (revenue_start_year + 1):
             new_installs = 910  # Fixed from previous ramp
         else:
             new_installs = 1040  # Steady state
@@ -142,7 +152,7 @@ for yr in years:
 
     equity_contribution = 0.0
     debt_draw = 0.0
-    if yr < 2028:
+    if yr < revenue_start_year:
         equity_contribution = min(float(equity_reserve), float(total_outflow))
         equity_reserve -= equity_contribution
         remaining_outflow = float(total_outflow) - float(equity_contribution)
@@ -157,7 +167,7 @@ for yr in years:
     debt_interest = 0.0
     debt_principal = 0.0
     debt_payment = 0.0
-    if yr >= 2028 and debt_balance > 0:
+    if yr >= revenue_start_year and debt_balance > 0:
         debt_interest = debt_balance * float(debt_apr)
         debt_payment = min(annual_debt_payment, debt_balance + debt_interest)
         debt_principal = max(0.0, min(debt_balance, debt_payment - debt_interest))
@@ -174,7 +184,7 @@ for yr in years:
     investor_cum_cf += investor_cf
     investor_roi = (investor_cum_cf / float(debt_drawn_total)) if float(debt_drawn_total) > 0 else 0.0
 
-    if yr < 2028:
+    if yr < revenue_start_year:
         equity_cf = -equity_contribution
     else:
         equity_cf = net_cash_after_debt
