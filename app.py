@@ -14,6 +14,7 @@ st.sidebar.header('Key Assumptions')
 
 fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
+base_cogs = st.sidebar.slider('Base COGS per Kit in 2028 ($)', min_value=100000, max_value=800000, value=400000, step=10000)
 fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
 fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
@@ -28,15 +29,14 @@ wacc = st.sidebar.slider('WACC (%)', min_value=0.0, max_value=30.0, value=11.5, 
 terminal_growth = st.sidebar.slider('Terminal Growth Rate (%)', min_value=-2.0, max_value=8.0, value=3.0, step=0.5) / 100
 
 # Install rates for first 4 quarters (first install year, e.g., 2028)
-st.sidebar.header('First Year Install Rates (Kits per Quarter) - Q4 and After Stabilize')
+st.sidebar.header('First Year Install Rates (Kits per Quarter)')
 q1_installs = st.sidebar.slider('Q1 Installs', min_value=0, max_value=200, value=98, step=10)  # ~10/week * 13 weeks / 4 = approx
 q2_installs = st.sidebar.slider('Q2 Installs', min_value=0, max_value=200, value=98, step=10)
 q3_installs = st.sidebar.slider('Q3 Installs', min_value=0, max_value=200, value=98, step=10)
-q4_installs = st.sidebar.slider('Q4 Installs', min_value=0, max_value=200, value=96, step=10)  # Total ~390 for year
+q4_installs = st.sidebar.slider('Q4 Installs and beyond', min_value=0, max_value=200, value=96, step=10)  # Total ~390 for year
 
 # Fixed assumptions (from previous)
 base_fuel_price = 3.00  # $/gal in 2028
-base_cogs = 400000  # $ per kit in 2028
 block_hours = 2800
 base_fuel_burn_gal_per_hour = 640
 split_pct = fuel_savings_split_to_tamarack
@@ -50,6 +50,39 @@ opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 20
 
 # Years
 years = list(range(2026, 2036))  # 10 years
+
+assumptions_rows = [
+    {'Assumption': 'Annual Fuel Inflation', 'Value': f"{fuel_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base fuel price starting in 2028'},
+    {'Assumption': 'Annual COGS Inflation', 'Value': f"{cogs_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base COGS per kit starting in 2028'},
+    {'Assumption': 'Base COGS per Kit (2028)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': 'Used as the base for COGS inflation and 2027 inventory build'},
+    {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
+    {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'},
+    {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': 'Used first to fund pre-2028 certification / inventory outflows'},
+    {'Assumption': 'Debt Raised', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': 'Drawn only if equity is exhausted pre-2028'},
+    {'Assumption': 'Debt APR', 'Value': f"{debt_apr * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to outstanding debt balance'},
+    {'Assumption': 'Debt Term', 'Value': f"{debt_term_years}", 'Units': 'Years', 'Type': 'Slider', 'Notes': 'Debt amortizes annually beginning in 2028'},
+    {'Assumption': 'Income Tax Rate', 'Value': f"{tax_rate * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Taxes apply only when taxable income is positive'},
+    {'Assumption': 'WACC', 'Value': f"{wacc * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used to discount unlevered free cash flows in DCF'},
+    {'Assumption': 'Terminal Growth Rate', 'Value': f"{terminal_growth * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used for terminal value if WACC > terminal growth'},
+    {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'Purchased in 2027 at base COGS per kit'},
+    {'Assumption': 'Total Addressable Market', 'Value': f"{int(tam_shipsets)}", 'Units': 'Shipsets', 'Type': 'Slider', 'Notes': 'Caps cumulative shipsets'},
+    {'Assumption': 'First-Year Install Rate (Q1)', 'Value': f"{int(q1_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
+    {'Assumption': 'First-Year Install Rate (Q2)', 'Value': f"{int(q2_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
+    {'Assumption': 'First-Year Install Rate (Q3)', 'Value': f"{int(q3_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
+    {'Assumption': 'First-Year Install Rate (Q4)', 'Value': f"{int(q4_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs; Q4 and after stabilize'},
+    {'Assumption': 'Base Fuel Price (2028)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Hardwired', 'Notes': 'Used as the base for inflated fuel price'},
+    {'Assumption': 'Block Hours per Aircraft per Year', 'Value': f"{int(block_hours)}", 'Units': 'Hours', 'Type': 'Hardwired', 'Notes': 'Used to compute annual fuel spend'},
+    {'Assumption': 'Base Fuel Burn', 'Value': f"{int(base_fuel_burn_gal_per_hour)}", 'Units': 'Gal/hour', 'Type': 'Hardwired', 'Notes': 'Used to compute annual fuel spend'},
+    {'Assumption': 'Model Years', 'Value': f"{years[0]}-{years[-1]}", 'Units': 'Years', 'Type': 'Hardwired', 'Notes': 'Annual model projection period'},
+    {'Assumption': 'Certification Spend Timing', 'Value': '50% in 2026, 50% in 2027', 'Units': '', 'Type': 'Hardwired', 'Notes': 'Certification spend split evenly across 2026-2027'},
+    {'Assumption': 'Install Ramp (2029 New Installs)', 'Value': '910', 'Units': 'Kits', 'Type': 'Hardwired', 'Notes': 'Fixed ramp year after first installs'},
+    {'Assumption': 'Install Ramp (2030+ New Installs)', 'Value': '1040', 'Units': 'Kits', 'Type': 'Hardwired', 'Notes': 'Steady-state new installs from 2030 onward'},
+    {'Assumption': 'OpEx Schedule', 'Value': ', '.join([f"{k}:{v}" for k, v in opex.items()]), 'Units': '$M/year', 'Type': 'Hardwired', 'Notes': 'OpEx by year; defaults to 15 after 2035'},
+    {'Assumption': 'Taxes Floor', 'Value': 'Taxes = max(0, taxable income) * tax rate', 'Units': '', 'Type': 'Hardwired', 'Notes': 'No tax benefit modeled for losses'},
+    {'Assumption': 'Terminal Value Condition', 'Value': 'Only computed if WACC > terminal growth', 'Units': '', 'Type': 'Hardwired', 'Notes': 'Otherwise terminal value treated as 0'},
+]
+
+assumptions_df = pd.DataFrame(assumptions_rows, columns=['Assumption', 'Value', 'Units', 'Type', 'Notes'])
 
 # Calculations
 data = {}
@@ -359,6 +392,26 @@ if st.button('Download PDF Report'):
         fig_dcf.suptitle('DCF Analysis')
         pdf.savefig(fig_dcf, bbox_inches='tight')
 
+        fig_assumptions = plt.figure(figsize=(17, 11))
+        ax_assumptions = fig_assumptions.add_subplot(111)
+        ax_assumptions.axis('off')
+        assumptions_tbl = ax_assumptions.table(
+            cellText=assumptions_df.values,
+            colLabels=assumptions_df.columns,
+            loc='center',
+            cellLoc='left'
+        )
+        assumptions_tbl.auto_set_font_size(False)
+        assumptions_tbl.set_fontsize(8)
+        assumptions_tbl.auto_set_column_width(col=list(range(len(assumptions_df.columns))))
+        assumptions_tbl.scale(1.0, 1.4)
+        for (row, col), cell in assumptions_tbl.get_celld().items():
+            if row == 0:
+                cell.set_text_props(weight='bold', fontsize=9)
+                cell.set_facecolor('#E6E6E6')
+        fig_assumptions.suptitle('Assumptions Appendix')
+        pdf.savefig(fig_assumptions, bbox_inches='tight')
+
         fig_ev = plt.figure(figsize=(17, 11))
         ax_ev = fig_ev.add_subplot(111)
         ax_ev.axis('off')
@@ -375,6 +428,9 @@ if st.button('Download PDF Report'):
         file_name="Tamarack_Financial_Report.pdf",
         mime="application/pdf"
     )
+
+st.header('Assumptions Appendix')
+st.dataframe(assumptions_df, use_container_width=True)
 
 st.header('Enterprise Value')
 st.write(f"Enterprise value ($M): {enterprise_value:.1f}")
