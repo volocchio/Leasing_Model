@@ -12,10 +12,10 @@ st.title('Tamarack Aerospace A320 Financial Model')
 # Simplified Sidebar with key sliders
 st.sidebar.header('Key Assumptions')
 
-fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
-base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/gal)', min_value=1.0, max_value=6.0, value=3.0, step=0.1)
-block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=2800, step=100)
-base_fuel_burn_gal_per_hour = st.sidebar.slider('Base Fuel Burn (gal/hour)', min_value=700, max_value=1200, value=700, step=50)
+fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
+base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/gal)', min_value=1.0, max_value=6.0, value=2.75, step=0.1)
+block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=3200, step=100)
+base_fuel_burn_gal_per_hour = st.sidebar.slider('Base Fuel Burn (gal/hour)', min_value=600, max_value=1200, value=750, step=50)
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
 base_cogs = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($)', min_value=100000, max_value=800000, value=400000, step=10000)
 fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
@@ -25,7 +25,7 @@ cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_valu
 cert_duration_years = st.sidebar.slider('Certification Duration (Years)', min_value=0.25, max_value=5.0, value=2.0, step=0.25)
 cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
 
-inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=130, step=10)
+inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=90, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
 
 debt_amount = st.sidebar.slider('Debt Raised ($M)', min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
