@@ -222,13 +222,21 @@ if st.button('Download PDF Report'):
     pdf_buffer = BytesIO()
     with PdfPages(pdf_buffer) as pdf:
         # Page 1: Table
-        fig_table = plt.figure(figsize=(11, 8))
+        fig_table = plt.figure(figsize=(17, 11))
         ax_table = fig_table.add_subplot(111)
         ax_table.axis('off')
         table = ax_table.table(cellText=df.values, colLabels=df.columns, rowLabels=df.index, loc='center', cellLoc='center')
         table.auto_set_font_size(False)
-        table.set_fontsize(8)
-        table.scale(1.2, 1.2)
+        table.set_fontsize(6)
+        table.auto_set_column_width(col=list(range(len(df.columns))))
+        table.scale(1.0, 1.4)
+        for (row, col), cell in table.get_celld().items():
+            if row == 0:
+                cell.set_text_props(weight='bold', fontsize=7)
+                cell.set_facecolor('#E6E6E6')
+                cell._text.set_rotation(45)
+                cell._text.set_ha('left')
+                cell.set_height(cell.get_height() * 1.3)
         fig_table.suptitle('Financial Projections Table')
         pdf.savefig(fig_table, bbox_inches='tight')
         
