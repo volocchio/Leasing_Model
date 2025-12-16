@@ -235,8 +235,11 @@ if st.button('Download PDF Report'):
                 cell.set_text_props(weight='bold', fontsize=7)
                 cell.set_facecolor('#E6E6E6')
                 cell._text.set_rotation(45)
+                cell._text.set_rotation_mode('anchor')
                 cell._text.set_ha('left')
-                cell.set_height(cell.get_height() * 1.3)
+                cell._text.set_va('bottom')
+                cell._text.set_position((cell.get_x() + 0.01, cell.get_y() + 0.02))
+                cell.set_height(cell.get_height() * 1.6)
         fig_table.suptitle('Financial Projections Table')
         pdf.savefig(fig_table, bbox_inches='tight')
         
