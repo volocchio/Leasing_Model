@@ -55,11 +55,13 @@ cum_shipsets = 0
 cum_cash = 0
 debt_balance = 0.0
 debt_draw_remaining = float(debt_amount)
+debt_drawn_total = 0.0
 investor_cum_cf = 0.0
 equity_cum_cf = 0.0
+equity_reserve = float(cert_readiness_cost)
 
-equity_amount = max(0.0, float(cert_readiness_cost) - float(debt_amount))
-capital_total = float(debt_amount) + equity_amount
+equity_amount = float(cert_readiness_cost)
+capital_total = float(debt_amount) + float(equity_amount)
 debt_weight = (float(debt_amount) / capital_total) if capital_total > 0 else 0.0
 equity_weight = (equity_amount / capital_total) if capital_total > 0 else 0.0
 wacc = debt_weight * float(debt_apr) * (1 - float(tax_rate)) + equity_weight * float(cost_of_equity)
@@ -106,10 +108,16 @@ for yr in years:
     total_outflow = capex + inventory
     fcf = ebitda - total_outflow
 
+    equity_contribution = 0.0
     debt_draw = 0.0
-    if yr < 2028 and debt_draw_remaining > 0:
-        debt_draw = min(debt_draw_remaining, total_outflow)
-        debt_draw_remaining -= debt_draw
+    if yr < 2028:
+        equity_contribution = min(float(equity_reserve), float(total_outflow))
+        equity_reserve -= equity_contribution
+        remaining_outflow = float(total_outflow) - float(equity_contribution)
+        if debt_draw_remaining > 0 and remaining_outflow > 0:
+            debt_draw = min(float(debt_draw_remaining), float(remaining_outflow))
+            debt_draw_remaining -= debt_draw
+            debt_drawn_total += debt_draw
 
     debt_balance_beg = debt_balance
     debt_balance = debt_balance + debt_draw
@@ -127,15 +135,14 @@ for yr in years:
     taxes = max(0.0, taxable_income) * float(tax_rate)
     fcf_after_tax = ebitda - taxes - total_outflow
     net_cash_after_debt = fcf_after_tax + debt_draw - debt_payment
-    cum_cash += net_cash_after_debt
+    net_cash_change = net_cash_after_debt + equity_contribution
+    cum_cash += net_cash_change
 
     investor_cf = (-debt_draw) + debt_payment
     investor_cum_cf += investor_cf
-    investor_roi = (investor_cum_cf / float(debt_amount)) if float(debt_amount) > 0 else 0.0
+    investor_roi = (investor_cum_cf / float(debt_drawn_total)) if float(debt_drawn_total) > 0 else 0.0
 
-    equity_contribution = 0.0
     if yr < 2028:
-        equity_contribution = max(0.0, total_outflow - debt_draw)
         equity_cf = -equity_contribution
     else:
         equity_cf = net_cash_after_debt
@@ -161,6 +168,7 @@ for yr in years:
         'Debt Principal ($M)': round(debt_principal, 1),
         'Debt Balance ($M)': round(debt_balance, 1),
         'Net Cash After Debt ($M)': round(net_cash_after_debt, 1),
+        'Net Cash Change ($M)': round(net_cash_change, 1),
         'Cumulative Cash ($M)': round(cum_cash, 1),
         'WACC (%)': round(wacc * 100, 1),
         'Debt Investor CF ($M)': round(investor_cf, 1),
