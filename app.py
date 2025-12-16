@@ -19,6 +19,12 @@ cert_readiness_cost = st.sidebar.slider('Total Cert & Production Readiness Cost 
 inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=130, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
 
+debt_amount = st.sidebar.slider('Debt Raised ($M)', min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
+debt_apr = st.sidebar.slider('Debt APR (%)', min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
+debt_term_years = st.sidebar.slider('Debt Term (Years)', min_value=1, max_value=15, value=7, step=1)
+tax_rate = st.sidebar.slider('Income Tax Rate (%)', min_value=0.0, max_value=40.0, value=21.0, step=0.5) / 100
+cost_of_equity = st.sidebar.slider('Cost of Equity (%)', min_value=0.0, max_value=30.0, value=15.0, step=0.5) / 100
+
 # Install rates for first 4 quarters (first install year, e.g., 2028)
 st.sidebar.header('First Year Install Rates (Kits per Quarter) - Q4 and After Stabilize')
 q1_installs = st.sidebar.slider('Q1 Installs', min_value=0, max_value=200, value=98, step=10)  # ~10/week * 13 weeks / 4 = approx
@@ -47,6 +53,22 @@ years = list(range(2026, 2036))  # 10 years
 data = {}
 cum_shipsets = 0
 cum_cash = 0
+debt_balance = 0.0
+debt_draw_remaining = float(debt_amount)
+investor_cum_cf = 0.0
+equity_cum_cf = 0.0
+
+equity_amount = max(0.0, float(cert_readiness_cost) - float(debt_amount))
+capital_total = float(debt_amount) + equity_amount
+debt_weight = (float(debt_amount) / capital_total) if capital_total > 0 else 0.0
+equity_weight = (equity_amount / capital_total) if capital_total > 0 else 0.0
+wacc = debt_weight * float(debt_apr) * (1 - float(tax_rate)) + equity_weight * float(cost_of_equity)
+
+if float(debt_apr) == 0:
+    annual_debt_payment = (float(debt_amount) / float(debt_term_years)) if float(debt_term_years) > 0 else 0.0
+else:
+    annual_debt_payment = float(debt_amount) * float(debt_apr) / (1 - (1 + float(debt_apr)) ** (-float(debt_term_years)))
+
 for yr in years:
     if yr < 2028:
         new_installs = 0
@@ -83,7 +105,43 @@ for yr in years:
     ebitda = gross_profit - opex_yr
     total_outflow = capex + inventory
     fcf = ebitda - total_outflow
-    cum_cash += fcf
+
+    debt_draw = 0.0
+    if yr < 2028 and debt_draw_remaining > 0:
+        debt_draw = min(debt_draw_remaining, total_outflow)
+        debt_draw_remaining -= debt_draw
+
+    debt_balance_beg = debt_balance
+    debt_balance = debt_balance + debt_draw
+
+    debt_interest = 0.0
+    debt_principal = 0.0
+    debt_payment = 0.0
+    if yr >= 2028 and debt_balance > 0:
+        debt_interest = debt_balance * float(debt_apr)
+        debt_payment = min(annual_debt_payment, debt_balance + debt_interest)
+        debt_principal = max(0.0, min(debt_balance, debt_payment - debt_interest))
+        debt_balance = max(0.0, debt_balance - debt_principal)
+
+    taxable_income = ebitda - debt_interest
+    taxes = max(0.0, taxable_income) * float(tax_rate)
+    fcf_after_tax = ebitda - taxes - total_outflow
+    net_cash_after_debt = fcf_after_tax + debt_draw - debt_payment
+    cum_cash += net_cash_after_debt
+
+    investor_cf = (-debt_draw) + debt_payment
+    investor_cum_cf += investor_cf
+    investor_roi = (investor_cum_cf / float(debt_amount)) if float(debt_amount) > 0 else 0.0
+
+    equity_contribution = 0.0
+    if yr < 2028:
+        equity_contribution = max(0.0, total_outflow - debt_draw)
+        equity_cf = -equity_contribution
+    else:
+        equity_cf = net_cash_after_debt
+
+    equity_cum_cf += equity_cf
+    equity_roi = (equity_cum_cf / float(equity_amount)) if float(equity_amount) > 0 else 0.0
     
     data[yr] = {
         'New Installs': new_installs,
@@ -95,7 +153,23 @@ for yr in years:
         'EBITDA ($M)': round(ebitda, 1),
         'CapEx/Inv ($M)': round(total_outflow, 1),
         'Free Cash Flow ($M)': round(fcf, 1),
+        'Taxes ($M)': round(taxes, 1),
+        'FCF After Tax ($M)': round(fcf_after_tax, 1),
+        'Debt Draw ($M)': round(debt_draw, 1),
+        'Debt Payment ($M)': round(debt_payment, 1),
+        'Debt Interest ($M)': round(debt_interest, 1),
+        'Debt Principal ($M)': round(debt_principal, 1),
+        'Debt Balance ($M)': round(debt_balance, 1),
+        'Net Cash After Debt ($M)': round(net_cash_after_debt, 1),
         'Cumulative Cash ($M)': round(cum_cash, 1),
+        'WACC (%)': round(wacc * 100, 1),
+        'Debt Investor CF ($M)': round(investor_cf, 1),
+        'Debt Investor Cum CF ($M)': round(investor_cum_cf, 1),
+        'Debt Investor ROI (%)': round(investor_roi * 100, 1),
+        'Equity Contribution ($M)': round(equity_contribution, 1),
+        'Equity CF ($M)': round(equity_cf, 1),
+        'Equity Cum CF ($M)': round(equity_cum_cf, 1),
+        'Equity ROI (%)': round(equity_roi * 100, 1),
     }
 
 df = pd.DataFrame(data).T
