@@ -15,7 +15,8 @@ st.sidebar.header('Key Assumptions')
 fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
 fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
-cert_readiness_cost = st.sidebar.slider('Total Cert & Production Readiness Cost ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
+fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
 inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=130, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
 
@@ -23,7 +24,8 @@ debt_amount = st.sidebar.slider('Debt Raised ($M)', min_value=0.0, max_value=500
 debt_apr = st.sidebar.slider('Debt APR (%)', min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
 debt_term_years = st.sidebar.slider('Debt Term (Years)', min_value=1, max_value=15, value=7, step=1)
 tax_rate = st.sidebar.slider('Income Tax Rate (%)', min_value=0.0, max_value=40.0, value=21.0, step=0.5) / 100
-cost_of_equity = st.sidebar.slider('Cost of Equity (%)', min_value=0.0, max_value=30.0, value=15.0, step=0.5) / 100
+wacc = st.sidebar.slider('WACC (%)', min_value=0.0, max_value=30.0, value=11.5, step=0.5) / 100
+terminal_growth = st.sidebar.slider('Terminal Growth Rate (%)', min_value=-2.0, max_value=8.0, value=3.0, step=0.5) / 100
 
 # Install rates for first 4 quarters (first install year, e.g., 2028)
 st.sidebar.header('First Year Install Rates (Kits per Quarter) - Q4 and After Stabilize')
@@ -37,7 +39,7 @@ base_fuel_price = 3.00  # $/gal in 2028
 base_cogs = 400000  # $ per kit in 2028
 block_hours = 2800
 base_fuel_burn_gal_per_hour = 640
-split_pct = 0.5
+split_pct = fuel_savings_split_to_tamarack
 
 # Cert costs split (assuming even over 2026-2027)
 cert_2026 = cert_readiness_cost / 2
@@ -61,10 +63,6 @@ equity_cum_cf = 0.0
 equity_reserve = float(cert_readiness_cost)
 
 equity_amount = float(cert_readiness_cost)
-capital_total = float(debt_amount) + float(equity_amount)
-debt_weight = (float(debt_amount) / capital_total) if capital_total > 0 else 0.0
-equity_weight = (equity_amount / capital_total) if capital_total > 0 else 0.0
-wacc = debt_weight * float(debt_apr) * (1 - float(tax_rate)) + equity_weight * float(cost_of_equity)
 
 if float(debt_apr) == 0:
     annual_debt_payment = (float(debt_amount) / float(debt_term_years)) if float(debt_term_years) > 0 else 0.0
@@ -170,7 +168,6 @@ for yr in years:
         'Net Cash After Debt ($M)': round(net_cash_after_debt, 1),
         'Net Cash Change ($M)': round(net_cash_change, 1),
         'Cumulative Cash ($M)': round(cum_cash, 1),
-        'WACC (%)': round(wacc * 100, 1),
         'Debt Investor CF ($M)': round(investor_cf, 1),
         'Debt Investor Cum CF ($M)': round(investor_cum_cf, 1),
         'Debt Investor ROI (%)': round(investor_roi * 100, 1),
@@ -182,7 +179,83 @@ for yr in years:
 
 df = pd.DataFrame(data).T
 
+net_income = df['EBITDA ($M)'] - df['Debt Interest ($M)'] - df['Taxes ($M)']
+pl_df = df[['Revenue ($M)', 'COGS ($M)', 'Gross Profit ($M)', 'OpEx ($M)', 'EBITDA ($M)', 'Debt Interest ($M)', 'Taxes ($M)']].copy()
+pl_df['Net Income ($M)'] = net_income.round(1)
+
+equity_paid_in = df['Equity Contribution ($M)'].cumsum()
+retained_earnings = net_income.cumsum()
+bs_df = pd.DataFrame({
+    'Cash ($M)': df['Cumulative Cash ($M)'],
+    'Debt Balance ($M)': df['Debt Balance ($M)'],
+    'Equity Paid-In ($M)': equity_paid_in,
+    'Retained Earnings ($M)': retained_earnings,
+}, index=df.index)
+bs_df['Total Assets ($M)'] = bs_df['Cash ($M)']
+bs_df['Total Liab + Equity ($M)'] = bs_df['Debt Balance ($M)'] + bs_df['Equity Paid-In ($M)'] + bs_df['Retained Earnings ($M)']
+
+operating_cf = df['EBITDA ($M)'] - df['Taxes ($M)']
+investing_cf = -df['CapEx/Inv ($M)']
+financing_cf = df['Debt Draw ($M)'] - df['Debt Payment ($M)'] + df['Equity Contribution ($M)']
+cash_net_change = operating_cf + investing_cf + financing_cf
+cf_df = pd.DataFrame({
+    'Operating CF ($M)': operating_cf,
+    'Investing CF ($M)': investing_cf,
+    'Financing CF ($M)': financing_cf,
+    'Net Change in Cash ($M)': cash_net_change,
+    'Ending Cash ($M)': df['Cumulative Cash ($M)'],
+}, index=df.index)
+
+unlevered_taxes = (df['EBITDA ($M)'].clip(lower=0.0) * float(tax_rate)).round(1)
+unlevered_fcf = (df['EBITDA ($M)'] - unlevered_taxes - df['CapEx/Inv ($M)']).round(1)
+discount_year0 = int(df.index.min())
+discount_t = (df.index - discount_year0 + 1).astype(int)
+discount_factor = pd.Series((1 / (1 + float(wacc)) ** discount_t).astype(float), index=df.index)
+pv_fcf = (unlevered_fcf.astype(float) * discount_factor).round(1)
+
+tv = np.nan
+pv_tv = np.nan
+if float(wacc) > float(terminal_growth):
+    tv = float(unlevered_fcf.iloc[-1]) * (1 + float(terminal_growth)) / (float(wacc) - float(terminal_growth))
+    pv_tv = tv * float(discount_factor.iloc[-1])
+
+dcf_df = pd.DataFrame({
+    'Unlevered FCF ($M)': unlevered_fcf,
+    'Discount Factor': discount_factor.round(4),
+    'PV of FCF ($M)': pv_fcf,
+}, index=df.index)
+
+pv_explicit = float(pv_fcf.sum())
+enterprise_value = pv_explicit + (float(pv_tv) if not np.isnan(pv_tv) else 0.0)
+
+dcf_summary_df = pd.DataFrame({
+    'PV Explicit FCF ($M)': [round(pv_explicit, 1)],
+    'Terminal Value ($M)': [round(0.0 if np.isnan(tv) else float(tv), 1)],
+    'PV Terminal Value ($M)': [round(0.0 if np.isnan(pv_tv) else float(pv_tv), 1)],
+    'Enterprise Value ($M)': [round(enterprise_value, 1)],
+})
+
 st.dataframe(df, use_container_width=True)
+
+st.header('Three-Statement Output')
+st.subheader('P&L')
+st.dataframe(pl_df, use_container_width=True)
+st.subheader('Balance Sheet')
+st.dataframe(bs_df, use_container_width=True)
+st.subheader('Statement of Cash Flows')
+st.dataframe(cf_df, use_container_width=True)
+
+st.header('DCF Analysis')
+st.dataframe(dcf_df, use_container_width=True)
+
+st.subheader('DCF Supporting Information')
+st.write(f"Discount base year: {discount_year0}")
+st.write(f"WACC: {wacc * 100:.2f}%")
+st.write(f"Terminal growth rate: {terminal_growth * 100:.2f}%")
+st.write(f"PV of explicit period FCF ($M): {pv_explicit:.1f}")
+st.write(f"PV of terminal value ($M): {0.0 if np.isnan(pv_tv) else pv_tv:.1f}")
+st.write(f"Enterprise value ($M): {enterprise_value:.1f}")
+st.dataframe(dcf_summary_df, use_container_width=True)
 
 # Nice Plots
 st.header('Financial Projections Plots')
@@ -245,6 +318,55 @@ if st.button('Download PDF Report'):
         
         # Page 2: Plots
         pdf.savefig(fig, bbox_inches='tight')
+
+        fig_pl = plt.figure(figsize=(17, 11))
+        ax_pl = fig_pl.add_subplot(111)
+        ax_pl.axis('off')
+        pl_tbl = ax_pl.table(cellText=pl_df.T.round(1).values, rowLabels=pl_df.T.index, colLabels=pl_df.T.columns, loc='center', cellLoc='center')
+        pl_tbl.auto_set_font_size(False)
+        pl_tbl.set_fontsize(8)
+        pl_tbl.scale(1.0, 1.4)
+        fig_pl.suptitle('P&L Statement')
+        pdf.savefig(fig_pl, bbox_inches='tight')
+
+        fig_bs = plt.figure(figsize=(17, 11))
+        ax_bs = fig_bs.add_subplot(111)
+        ax_bs.axis('off')
+        bs_tbl = ax_bs.table(cellText=bs_df.T.round(1).values, rowLabels=bs_df.T.index, colLabels=bs_df.T.columns, loc='center', cellLoc='center')
+        bs_tbl.auto_set_font_size(False)
+        bs_tbl.set_fontsize(8)
+        bs_tbl.scale(1.0, 1.4)
+        fig_bs.suptitle('Balance Sheet')
+        pdf.savefig(fig_bs, bbox_inches='tight')
+
+        fig_cf = plt.figure(figsize=(17, 11))
+        ax_cf = fig_cf.add_subplot(111)
+        ax_cf.axis('off')
+        cf_tbl = ax_cf.table(cellText=cf_df.T.round(1).values, rowLabels=cf_df.T.index, colLabels=cf_df.T.columns, loc='center', cellLoc='center')
+        cf_tbl.auto_set_font_size(False)
+        cf_tbl.set_fontsize(8)
+        cf_tbl.scale(1.0, 1.4)
+        fig_cf.suptitle('Statement of Cash Flows')
+        pdf.savefig(fig_cf, bbox_inches='tight')
+
+        fig_dcf = plt.figure(figsize=(17, 11))
+        ax_dcf = fig_dcf.add_subplot(111)
+        ax_dcf.axis('off')
+        dcf_tbl = ax_dcf.table(cellText=dcf_df.T.values, rowLabels=dcf_df.T.index, colLabels=dcf_df.T.columns, loc='center', cellLoc='center')
+        dcf_tbl.auto_set_font_size(False)
+        dcf_tbl.set_fontsize(8)
+        dcf_tbl.scale(1.0, 1.4)
+        fig_dcf.suptitle('DCF Analysis')
+        pdf.savefig(fig_dcf, bbox_inches='tight')
+
+        fig_ev = plt.figure(figsize=(17, 11))
+        ax_ev = fig_ev.add_subplot(111)
+        ax_ev.axis('off')
+        ax_ev.text(0.02, 0.80, 'Enterprise Value Summary', fontsize=20, weight='bold')
+        ax_ev.text(0.02, 0.65, f"Enterprise Value ($M): {enterprise_value:.1f}", fontsize=16)
+        ax_ev.text(0.02, 0.55, f"WACC: {wacc * 100:.2f}%", fontsize=12)
+        ax_ev.text(0.02, 0.49, f"Terminal Growth Rate: {terminal_growth * 100:.2f}%", fontsize=12)
+        pdf.savefig(fig_ev, bbox_inches='tight')
     
     pdf_buffer.seek(0)
     st.download_button(
@@ -253,3 +375,6 @@ if st.button('Download PDF Report'):
         file_name="Tamarack_Financial_Report.pdf",
         mime="application/pdf"
     )
+
+st.header('Enterprise Value')
+st.write(f"Enterprise value ($M): {enterprise_value:.1f}")
