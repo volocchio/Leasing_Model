@@ -13,11 +13,13 @@ st.title('Tamarack Aerospace A320 Financial Model')
 st.sidebar.header('Key Assumptions')
 
 fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=5.0, step=0.5) / 100
+base_fuel_price = st.sidebar.slider('Base Fuel Price in 2028 ($/gal)', min_value=1.0, max_value=6.0, value=3.0, step=0.1)
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
 base_cogs = st.sidebar.slider('Base COGS per Kit in 2028 ($)', min_value=100000, max_value=800000, value=400000, step=10000)
 fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
 fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
+
 inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=130, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
 
@@ -36,7 +38,6 @@ q3_installs = st.sidebar.slider('Q3 Installs', min_value=0, max_value=200, value
 q4_installs = st.sidebar.slider('Q4 Installs and beyond', min_value=0, max_value=200, value=96, step=10)  # Total ~390 for year
 
 # Fixed assumptions (from previous)
-base_fuel_price = 3.00  # $/gal in 2028
 block_hours = 2800
 base_fuel_burn_gal_per_hour = 640
 split_pct = fuel_savings_split_to_tamarack
@@ -53,6 +54,7 @@ years = list(range(2026, 2036))  # 10 years
 
 assumptions_rows = [
     {'Assumption': 'Annual Fuel Inflation', 'Value': f"{fuel_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base fuel price starting in 2028'},
+    {'Assumption': 'Base Fuel Price (2028)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Slider', 'Notes': 'Used as the base for inflated fuel price'},
     {'Assumption': 'Annual COGS Inflation', 'Value': f"{cogs_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base COGS per kit starting in 2028'},
     {'Assumption': 'Base COGS per Kit (2028)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': 'Used as the base for COGS inflation and 2027 inventory build'},
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
@@ -70,7 +72,6 @@ assumptions_rows = [
     {'Assumption': 'First-Year Install Rate (Q2)', 'Value': f"{int(q2_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
     {'Assumption': 'First-Year Install Rate (Q3)', 'Value': f"{int(q3_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs'},
     {'Assumption': 'First-Year Install Rate (Q4)', 'Value': f"{int(q4_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': 'First install year (2028) quarterly installs; Q4 and after stabilize'},
-    {'Assumption': 'Base Fuel Price (2028)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Hardwired', 'Notes': 'Used as the base for inflated fuel price'},
     {'Assumption': 'Block Hours per Aircraft per Year', 'Value': f"{int(block_hours)}", 'Units': 'Hours', 'Type': 'Hardwired', 'Notes': 'Used to compute annual fuel spend'},
     {'Assumption': 'Base Fuel Burn', 'Value': f"{int(base_fuel_burn_gal_per_hour)}", 'Units': 'Gal/hour', 'Type': 'Hardwired', 'Notes': 'Used to compute annual fuel spend'},
     {'Assumption': 'Model Years', 'Value': f"{years[0]}-{years[-1]}", 'Units': 'Years', 'Type': 'Hardwired', 'Notes': 'Annual model projection period'},
