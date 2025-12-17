@@ -4,10 +4,63 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from io import BytesIO
+from pathlib import Path
+
+from app_sense import render_sensitivity_app
 
 st.set_page_config(layout='wide')
 
-st.title('Tamarack Aerospace A320 Financial Model')
+_asset_dir = Path(__file__).resolve().parent
+_img_a320 = _asset_dir / 'A320Tam.jpg'
+_img_logo = _asset_dir / 'logo.png'
+
+col_img_1, col_img_2, _ = st.columns([1, 1, 6])
+with col_img_1:
+    if _img_a320.exists():
+        st.image(str(_img_a320), width=140)
+with col_img_2:
+    if _img_logo.exists():
+        st.image(str(_img_logo), width=140)
+
+st.title('Tamarack Aerospace A320 Financial Model - Leasing, Split Savings')
+
+st.markdown(
+    """
+<style>
+div[data-testid="stRadio"] {
+  background: #F7FAFF;
+  border: 2px solid #3B82F6;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 6px 0 14px 0;
+}
+div[data-testid="stRadio"] label p {
+  font-weight: 700 !important;
+  font-size: 1.05rem !important;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] {
+  gap: 16px;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] > label {
+  background: #FFFFFF;
+  border: 1px solid #BFDBFE;
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {
+  border-color: #1D4ED8;
+  background: #DBEAFE;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.18);
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+mode = st.radio('Mode', options=['Standalone Model', 'Sensitivity Study (3 Drivers, 1 Output)'], horizontal=True)
+
+if mode == 'Sensitivity Study (3 Drivers, 1 Output)':
+    render_sensitivity_app(baseline_params=None, show_title=False)
+    st.stop()
 
 # Simplified Sidebar with key sliders
 st.sidebar.header('Key Assumptions')
@@ -17,7 +70,8 @@ base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/ga
 block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=3200, step=100)
 base_fuel_burn_gal_per_hour = st.sidebar.slider('Base Fuel Burn (gal/hour)', min_value=600, max_value=1200, value=750, step=50)
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
-base_cogs = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($)', min_value=100000, max_value=800000, value=400000, step=10000)
+base_cogs_k = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($000)', min_value=100, max_value=800, value=400, step=10)
+base_cogs = float(base_cogs_k) * 1000.0
 fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
 fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
@@ -71,7 +125,7 @@ assumptions_rows = [
     {'Assumption': 'Block Hours per Aircraft per Year', 'Value': f"{int(block_hours)}", 'Units': 'Hours', 'Type': 'Slider', 'Notes': 'Used to compute annual fuel spend'},
     {'Assumption': 'Base Fuel Burn', 'Value': f"{int(base_fuel_burn_gal_per_hour)}", 'Units': 'Gal/hour', 'Type': 'Slider', 'Notes': 'Used to compute annual fuel spend'},
     {'Assumption': 'Annual COGS Inflation', 'Value': f"{cogs_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base COGS per kit starting in the first revenue year'},
-    {'Assumption': 'Base COGS per Kit (First Revenue Year)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': f"Base COGS per kit used in {revenue_start_year}; also used for inventory build"},
+    {'Assumption': 'Base COGS per Kit (First Revenue Year)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': f"Input slider is in $000; base COGS per kit used in {revenue_start_year}; also used for inventory build"},
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
     {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'},
     {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; go-live is {revenue_start_year}Q{revenue_start_quarter}"},

@@ -1,11 +1,16 @@
 import itertools
+from datetime import datetime
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import streamlit as st
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
 
 
 @dataclass(frozen=True)
@@ -19,12 +24,16 @@ class DriverSpec:
 def _to_internal_value(kind: str, v: float) -> float:
     if kind == "percent":
         return float(v) / 100.0
+    if kind == "thousands":
+        return float(v) * 1000.0
     return float(v)
 
 
 def _to_display_value(kind: str, v: float) -> float:
     if kind == "percent":
         return float(v) * 100.0
+    if kind == "thousands":
+        return float(v) / 1000.0
     return float(v)
 
 
@@ -257,10 +266,11 @@ def build_baseline_params() -> Dict[str, Any]:
     fuel_inflation = st.sidebar.slider("Annual Fuel Inflation (%)", min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
     base_fuel_price = st.sidebar.slider("Base Fuel Price at First Revenue Year ($/gal)", min_value=1.0, max_value=6.0, value=2.75, step=0.1)
     block_hours = st.sidebar.slider("Block Hours per Aircraft per Year", min_value=1000, max_value=5000, value=3200, step=100)
-    base_fuel_burn_gal_per_hour = st.sidebar.slider("Base Fuel Burn (gal/hour)", min_value=700, max_value=1200, value=750, step=50)
+    base_fuel_burn_gal_per_hour = st.sidebar.slider("Base Fuel Burn (gal/hour)", min_value=600, max_value=1200, value=750, step=50)
 
     cogs_inflation = st.sidebar.slider("Annual COGS Inflation (%)", min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
-    base_cogs = st.sidebar.slider("Base COGS per Kit at First Revenue Year ($)", min_value=100000, max_value=800000, value=400000, step=10000)
+    base_cogs_k = st.sidebar.slider("Base COGS per Kit at First Revenue Year ($1000)", min_value=100, max_value=800, value=400, step=10)
+    base_cogs = float(base_cogs_k) * 1000.0
 
     fuel_saving_pct = st.sidebar.slider("Fuel Savings % per Aircraft", min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
     fuel_savings_split_to_tamarack = st.sidebar.slider("Fuel Savings Split to Tamarack (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
@@ -277,8 +287,8 @@ def build_baseline_params() -> Dict[str, Any]:
     debt_term_years = st.sidebar.slider("Debt Term (Years)", min_value=1, max_value=15, value=7, step=1)
 
     tax_rate = st.sidebar.slider("Income Tax Rate (%)", min_value=0.0, max_value=40.0, value=21.0, step=0.5) / 100
-    wacc = st.sidebar.slider("WACC (%)", min_value=0.0, max_value=30.0, value=11.5, step=0.5) / 100
-    terminal_growth = st.sidebar.slider("Terminal Growth Rate (%)", min_value=-2.0, max_value=8.0, value=3.0, step=0.5) / 100
+    wacc = st.sidebar.slider("WACC (%)", min_value=0.0, max_value=30.0, value=9.5, step=0.5) / 100
+    terminal_growth = st.sidebar.slider("Terminal Growth Rate (%)", min_value=-2.0, max_value=8.0, value=2.5, step=0.5) / 100
 
     st.sidebar.header("Installs")
     q1_installs = st.sidebar.slider("Q1 Installs", min_value=0, max_value=200, value=98, step=10)
@@ -331,11 +341,11 @@ def build_driver_catalog(baseline: Dict[str, Any]) -> List[DriverSpec]:
         DriverSpec("base_fuel_price", "Fuel Price ($/gal)", "$/gal", "float"),
         DriverSpec("cert_duration_years", "Certification Duration (Years)", "years", "float"),
         DriverSpec("fuel_savings_split_to_tamarack", "Fuel Savings Split to Tamarack (%)", "%", "percent"),
-        DriverSpec("fuel_inflation", "Annual Fuel Inflation", "%", "percent"),
+        DriverSpec("fuel_inflation", "Annual Fuel Inflation (%)", "%", "percent"),
         DriverSpec("block_hours", "Block Hours per Aircraft per Year", "hours", "int"),
-        DriverSpec("base_fuel_burn_gal_per_hour", "Base Fuel Burn", "gal/hour", "int"),
+        DriverSpec("base_fuel_burn_gal_per_hour", "Base Fuel Burn (gal/hour)", "gal/hour", "int"),
         DriverSpec("cogs_inflation", "Annual COGS Inflation", "%", "percent"),
-        DriverSpec("base_cogs", "Base COGS per Kit (First Revenue Year)", "$/kit", "int"),
+        DriverSpec("base_cogs", "Base COGS per Kit (First Revenue Year) ($000)", "$000/kit", "thousands"),
         DriverSpec("fuel_saving_pct", "Fuel Savings % per Aircraft", "%", "percent"),
         DriverSpec("cert_readiness_cost", "Equity", "$M", "float"),
         DriverSpec("inventory_kits_pre_install", "Inventory Kits Before First Install", "kits", "int"),
@@ -352,7 +362,7 @@ def _grid_values(spec: DriverSpec, low_disp: float, high_disp: float, points: in
     if points < 2:
         points = 2
 
-    if spec.kind in {"int"}:
+    if spec.kind in {"int", "thousands"}:
         vals = np.linspace(float(low_disp), float(high_disp), int(points))
         vals = np.unique(np.round(vals).astype(int)).tolist()
         return [float(v) for v in vals]
@@ -416,130 +426,299 @@ def run_sensitivity(
             }
         )
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    for spec in (d1, d2, d3):
+        col = spec.label
+        if col in df.columns:
+            if spec.kind in {"int", "thousands"}:
+                df[col] = df[col].round(0).astype(int)
+            elif spec.key == "cert_duration_years":
+                df[col] = df[col].astype(float).round(2)
+            else:
+                df[col] = df[col].astype(float).round(1)
+    if "Value" in df.columns:
+        df["Value"] = df["Value"].astype(float).round(1)
+    return df
 
 
-def plot_heatmap(pivot: pd.DataFrame, x_label: str, y_label: str, title: str) -> plt.Figure:
+def plot_heatmap(
+    pivot: pd.DataFrame,
+    x_label: str,
+    y_label: str,
+    title: str,
+    x_tick_fmt: str = "%.1f",
+    y_tick_fmt: str = "%.1f",
+) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    z = pivot.values.astype(float)
-    im = ax.imshow(z, aspect="auto", origin="lower")
+    z = np.ma.masked_invalid(pivot.values.astype(float))
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad(color="#EEEEEE")
+    im = ax.imshow(z, aspect="auto", origin="lower", cmap=cmap, interpolation="nearest")
 
     ax.set_title(title)
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
 
     ax.set_xticks(np.arange(pivot.shape[1]))
-    ax.set_xticklabels([str(v) for v in pivot.columns.tolist()], rotation=45, ha="right")
+    ax.set_xticklabels([x_tick_fmt % float(v) for v in pivot.columns.tolist()], rotation=45, ha="right")
 
     ax.set_yticks(np.arange(pivot.shape[0]))
-    ax.set_yticklabels([str(v) for v in pivot.index.tolist()])
+    ax.set_yticklabels([y_tick_fmt % float(v) for v in pivot.index.tolist()])
 
     cbar = fig.colorbar(im, ax=ax)
     cbar.set_label("Value")
+    cbar.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
 
     fig.tight_layout()
     return fig
 
 
-st.set_page_config(layout="wide")
-st.title("Tamarack Aerospace – 3-Driver Sensitivity Study")
+def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_title: bool = True) -> None:
+    if show_title:
+        st.title("Tamarack Aerospace – 3-Driver Sensitivity Study")
 
-baseline_params = build_baseline_params()
+    if baseline_params is None:
+        baseline_params = build_baseline_params()
 
-st.header("Baseline Outputs")
-baseline_outputs = run_model(baseline_params)
-st.dataframe(pd.DataFrame([baseline_outputs]).T.rename(columns={0: "Baseline"}), use_container_width=True)
+    st.header("Baseline Outputs")
+    baseline_outputs = run_model(baseline_params)
+    baseline_out_df = pd.DataFrame({
+        "Metric": list(baseline_outputs.keys()),
+        "Baseline": list(baseline_outputs.values()),
+    })
+    baseline_out_df["Baseline"] = baseline_out_df["Baseline"].astype(float).round(1)
+    st.dataframe(baseline_out_df, hide_index=True, use_container_width=False)
 
-st.header("Sensitivity Study")
+    st.header("Sensitivity Study")
 
-drivers = build_driver_catalog(baseline_params)
-driver_by_key = {d.key: d for d in drivers}
-driver_labels = {d.key: d.label for d in drivers}
+    drivers = build_driver_catalog(baseline_params)
+    driver_by_key = {d.key: d for d in drivers}
+    driver_labels = {d.key: d.label for d in drivers}
 
-keys_all = [d.key for d in drivers]
+    def _key_index(keys: List[str], desired: str, fallback: int = 0) -> int:
+        return keys.index(desired) if desired in keys else fallback
 
-def _key_index(keys: List[str], desired: str, fallback: int = 0) -> int:
-    return keys.index(desired) if desired in keys else fallback
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.markdown(
+            '<div style="font-size: 1.15rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 1</div>',
+            unsafe_allow_html=True,
+        )
+        d1_options = [d.key for d in drivers]
+        d1_key = st.selectbox(
+            "Driver 1",
+            options=d1_options,
+            format_func=lambda k: driver_labels[k],
+            index=_key_index(d1_options, "wacc", 0),
+            label_visibility="collapsed",
+        )
+    with col_b:
+        st.markdown(
+            '<div style="font-size: 1.15rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 2</div>',
+            unsafe_allow_html=True,
+        )
+        d2_options = [d.key for d in drivers if d.key != d1_key]
+        d2_default = "base_fuel_price" if "base_fuel_price" in d2_options else (d2_options[0] if len(d2_options) > 0 else d1_key)
+        d2_key = st.selectbox(
+            "Driver 2",
+            options=d2_options,
+            format_func=lambda k: driver_labels[k],
+            index=_key_index(d2_options, d2_default, 0),
+            label_visibility="collapsed",
+        )
+    with col_c:
+        st.markdown(
+            '<div style="font-size: 1.15rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 3</div>',
+            unsafe_allow_html=True,
+        )
+        d3_options = [d.key for d in drivers if d.key not in {d1_key, d2_key}]
+        d3_default = "cert_duration_years" if "cert_duration_years" in d3_options else (d3_options[0] if len(d3_options) > 0 else d1_key)
+        d3_key = st.selectbox(
+            "Driver 3",
+            options=d3_options,
+            format_func=lambda k: driver_labels[k],
+            index=_key_index(d3_options, d3_default, 0),
+            label_visibility="collapsed",
+        )
 
-col_a, col_b, col_c = st.columns(3)
-with col_a:
-    d1_options = [d.key for d in drivers]
-    d1_key = st.selectbox(
-        "Driver 1",
-        options=d1_options,
-        format_func=lambda k: driver_labels[k],
-        index=_key_index(d1_options, "wacc", 0),
-    )
-with col_b:
-    d2_options = [d.key for d in drivers if d.key != d1_key]
-    d2_default = "base_fuel_price" if "base_fuel_price" in d2_options else (d2_options[0] if len(d2_options) > 0 else d1_key)
-    d2_key = st.selectbox(
-        "Driver 2",
-        options=d2_options,
-        format_func=lambda k: driver_labels[k],
-        index=_key_index(d2_options, d2_default, 0),
-    )
-with col_c:
-    d3_options = [d.key for d in drivers if d.key not in {d1_key, d2_key}]
-    d3_default = "cert_duration_years" if "cert_duration_years" in d3_options else (d3_options[0] if len(d3_options) > 0 else d1_key)
-    d3_key = st.selectbox(
-        "Driver 3",
-        options=d3_options,
-        format_func=lambda k: driver_labels[k],
-        index=_key_index(d3_options, d3_default, 0),
-    )
+    d1 = driver_by_key[d1_key]
+    d2 = driver_by_key[d2_key]
+    d3 = driver_by_key[d3_key]
 
-d1 = driver_by_key[d1_key]
-d2 = driver_by_key[d2_key]
-d3 = driver_by_key[d3_key]
+    metrics = list(baseline_outputs.keys())
+    metric = st.selectbox("Metric to Sensitize", options=metrics, index=0)
 
-metrics = list(baseline_outputs.keys())
-metric = st.selectbox("Metric to Sensitize", options=metrics, index=0)
+    b1 = _to_display_value(d1.kind, float(baseline_params[d1.key]))
+    b2 = _to_display_value(d2.kind, float(baseline_params[d2.key]))
+    b3 = _to_display_value(d3.kind, float(baseline_params[d3.key]))
 
-b1 = _to_display_value(d1.kind, float(baseline_params[d1.key]))
-b2 = _to_display_value(d2.kind, float(baseline_params[d2.key]))
-b3 = _to_display_value(d3.kind, float(baseline_params[d3.key]))
+    cfg1, cfg2, cfg3 = st.columns(3)
+    with cfg1:
+        st.markdown(
+            '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 1 Range</div>',
+            unsafe_allow_html=True,
+        )
+        d1_low = st.number_input("Low", value=float(b1) * 0.9, key="d1_low")
+        d1_high = st.number_input("High", value=float(b1) * 1.1 if float(b1) != 0 else 1.0, key="d1_high")
+        d1_points = st.number_input("Points", min_value=2, max_value=25, value=5, step=1, key="d1_points")
+    with cfg2:
+        st.markdown(
+            '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 2 Range</div>',
+            unsafe_allow_html=True,
+        )
+        d2_low = st.number_input("Low ", value=float(b2) * 0.9, key="d2_low")
+        d2_high = st.number_input("High ", value=float(b2) * 1.1 if float(b2) != 0 else 1.0, key="d2_high")
+        d2_points = st.number_input("Points ", min_value=2, max_value=25, value=5, step=1, key="d2_points")
+    with cfg3:
+        st.markdown(
+            '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 3 Range</div>',
+            unsafe_allow_html=True,
+        )
+        d3_low = st.number_input("Low  ", value=float(b3) * 0.9, key="d3_low")
+        d3_high = st.number_input("High  ", value=float(b3) * 1.1 if float(b3) != 0 else 1.0, key="d3_high")
+        d3_points = st.number_input("Points  ", min_value=2, max_value=25, value=3, step=1, key="d3_points")
 
-cfg1, cfg2, cfg3 = st.columns(3)
-with cfg1:
-    st.subheader("Driver 1 Range")
-    d1_low = st.number_input("Low", value=float(b1) * 0.9, key="d1_low")
-    d1_high = st.number_input("High", value=float(b1) * 1.1 if float(b1) != 0 else 1.0, key="d1_high")
-    d1_points = st.number_input("Points", min_value=2, max_value=25, value=5, step=1, key="d1_points")
-with cfg2:
-    st.subheader("Driver 2 Range")
-    d2_low = st.number_input("Low ", value=float(b2) * 0.9, key="d2_low")
-    d2_high = st.number_input("High ", value=float(b2) * 1.1 if float(b2) != 0 else 1.0, key="d2_high")
-    d2_points = st.number_input("Points ", min_value=2, max_value=25, value=5, step=1, key="d2_points")
-with cfg3:
-    st.subheader("Driver 3 Range")
-    d3_low = st.number_input("Low  ", value=float(b3) * 0.9, key="d3_low")
-    d3_high = st.number_input("High  ", value=float(b3) * 1.1 if float(b3) != 0 else 1.0, key="d3_high")
-    d3_points = st.number_input("Points  ", min_value=2, max_value=25, value=3, step=1, key="d3_points")
+    d1_vals = _grid_values(d1, float(d1_low), float(d1_high), int(d1_points))
+    d2_vals = _grid_values(d2, float(d2_low), float(d2_high), int(d2_points))
+    d3_vals = _grid_values(d3, float(d3_low), float(d3_high), int(d3_points))
 
-d1_vals = _grid_values(d1, float(d1_low), float(d1_high), int(d1_points))
-d2_vals = _grid_values(d2, float(d2_low), float(d2_high), int(d2_points))
-d3_vals = _grid_values(d3, float(d3_low), float(d3_high), int(d3_points))
+    def _fmt_value(spec: DriverSpec, v: float) -> str:
+        if spec.kind in {"int", "thousands"}:
+            return f"{int(round(float(v)))}"
+        if spec.key == "cert_duration_years":
+            return f"{float(v):.2f}"
+        return f"{float(v):.1f}"
 
-scenario_count = len(d1_vals) * len(d2_vals) * len(d3_vals)
-st.write(f"Scenarios: {scenario_count}")
+    def _tick_fmt(spec: DriverSpec) -> str:
+        if spec.kind in {"int", "thousands"}:
+            return "%.0f"
+        if spec.key == "cert_duration_years":
+            return "%.2f"
+        return "%.1f"
 
-if scenario_count > 5000:
-    st.error("Too many scenarios. Reduce points (target <= 5,000).")
-else:
+    def _round_series_for_spec(s: pd.Series, spec: DriverSpec) -> pd.Series:
+        if spec.kind in {"int", "thousands"}:
+            return s.astype(float).round(0)
+        if spec.key == "cert_duration_years":
+            return s.astype(float).round(2)
+        return s.astype(float).round(1)
+
+    def _disp_key(spec: DriverSpec, v: float) -> float:
+        if spec.kind in {"int", "thousands"}:
+            return float(int(round(float(v))))
+        if spec.key == "cert_duration_years":
+            return float(round(float(v), 2))
+        return float(round(float(v), 1))
+
+    scenario_count = len(d1_vals) * len(d2_vals) * len(d3_vals)
+    st.write(f"Scenarios: {scenario_count}")
+
+    if scenario_count > 5000:
+        st.error("Too many scenarios. Reduce points (target <= 5,000).")
+        return
+
     run = st.button("Run Sensitivity Study")
-    if run:
-        results = run_sensitivity(baseline_params, d1, d2, d3, d1_vals, d2_vals, d3_vals, metric)
-        st.subheader("Scenario Results (Long Form)")
-        st.dataframe(results, use_container_width=True)
+    if not run:
+        return
 
-        st.subheader("Heatmap Slices")
-        tabs = st.tabs([f"{d3.label} = {v}" for v in d3_vals])
-        for tab, v3 in zip(tabs, d3_vals):
-            with tab:
-                slice_df = results[results[d3.label] == v3]
-                pivot = slice_df.pivot(index=d2.label, columns=d1.label, values="Value").sort_index().sort_index(axis=1)
-                st.dataframe(pivot, use_container_width=True)
-                fig = plot_heatmap(pivot, x_label=d1.label, y_label=d2.label, title=f"{metric} | {d3.label}={v3}")
-                st.pyplot(fig)
+    results = run_sensitivity(baseline_params, d1, d2, d3, d1_vals, d2_vals, d3_vals, metric)
+    st.subheader("Scenario Results (Long Form)")
+    st.dataframe(results, use_container_width=True)
+
+    st.subheader("Heatmap Slices")
+    st.markdown(
+        f"**Driver 1 (X-axis):** {d1.label}  \n"
+        f"**Driver 2 (Y-axis):** {d2.label}  \n"
+        f"**Driver 3 (Tabs/Slices):** {d3.label}"
+    )
+
+    if d3.key == "cert_duration_years":
+        st.markdown(
+            """
+<style>
+div[data-baseweb="tab-list"] {
+  gap: 10px;
+}
+div[data-baseweb="tab-list"] button[role="tab"] {
+  font-weight: 700 !important;
+  border: 2px solid #FF8C00 !important;
+  border-radius: 10px !important;
+  background: #FFF7E6 !important;
+  padding: 6px 12px !important;
+}
+div[data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] {
+  background: #FFE0B2 !important;
+  border-color: #E65100 !important;
+  box-shadow: 0 0 0 3px rgba(230, 81, 0, 0.20);
+}
+</style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    d3_disp_vals = [_disp_key(d3, float(v)) for v in d3_vals]
+    seen = set()
+    d3_disp_vals = [v for v in d3_disp_vals if not (v in seen or seen.add(v))]
+
+    tabs = st.tabs([f"{d3.label} = {_fmt_value(d3, float(v))}" for v in d3_disp_vals])
+    pdf_figs: List[Figure] = []
+    for tab, v3 in zip(tabs, d3_disp_vals):
+        with tab:
+            st.markdown(f"**Slice:** {d3.label} = {_fmt_value(d3, float(v3))}")
+            slice_df = results[_round_series_for_spec(results[d3.label], d3) == float(v3)]
+            pivot = slice_df.pivot(index=d2.label, columns=d1.label, values="Value").sort_index().sort_index(axis=1).astype(float).round(1)
+            st.dataframe(pivot, use_container_width=True)
+            fig = plot_heatmap(
+                pivot,
+                x_label=d1.label,
+                y_label=d2.label,
+                title=f"{metric} | {d3.label}={_fmt_value(d3, float(v3))}",
+                x_tick_fmt=_tick_fmt(d1),
+                y_tick_fmt=_tick_fmt(d2),
+            )
+            st.pyplot(fig)
+            pdf_figs.append(fig)
+
+    buf = BytesIO()
+    with PdfPages(buf) as pdf:
+        title_fig = plt.figure(figsize=(8.5, 11))
+        title_fig.clf()
+        title_fig.text(0.5, 0.94, "Sensitivity Study Report", ha="center", va="top", fontsize=18, fontweight="bold")
+        title_fig.text(0.5, 0.90, "Tamarack Aerospace – 3-Driver Sensitivity Study", ha="center", va="top", fontsize=12)
+        title_fig.text(
+            0.08,
+            0.84,
+            "\n".join(
+                [
+                    f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    f"Metric: {metric}",
+                    f"Driver 1: {d1.label}",
+                    f"Driver 2: {d2.label}",
+                    f"Driver 3 (Slices): {d3.label}",
+                    f"Scenarios: {scenario_count}",
+                ]
+            ),
+            ha="left",
+            va="top",
+            fontsize=11,
+        )
+        pdf.savefig(title_fig, bbox_inches="tight")
+        plt.close(title_fig)
+
+        for fig in pdf_figs:
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+    st.download_button(
+        label="Download Sensitivity PDF",
+        data=buf.getvalue(),
+        file_name="sensitivity_study.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
+
+
+if __name__ == "__main__":
+    st.set_page_config(layout="wide")
+    render_sensitivity_app(show_title=True)
