@@ -28,7 +28,7 @@ cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
 inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=90, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
 
-debt_amount = st.sidebar.slider('Debt Raised ($M)', min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
+debt_amount = st.sidebar.slider('Max Debt Available ($M)', min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
 debt_apr = st.sidebar.slider('Debt APR (%)', min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
 debt_term_years = st.sidebar.slider('Debt Term (Years)', min_value=1, max_value=15, value=7, step=1)
 tax_rate = st.sidebar.slider('Income Tax Rate (%)', min_value=0.0, max_value=40.0, value=21.0, step=0.5) / 100
@@ -52,8 +52,12 @@ for q in range(int(cert_duration_quarters)):
     yr = 2026 + (q // 4)
     cert_spend_by_year[yr] = cert_spend_by_year.get(yr, 0.0) + cert_spend_per_quarter
 
-revenue_start_year = 2026 + int(np.ceil(float(cert_duration_quarters) / 4.0))
-inventory_year = max(2026, revenue_start_year - 1)
+revenue_start_q_index = int(cert_duration_quarters)
+revenue_start_year = 2026 + (int(revenue_start_q_index) // 4)
+revenue_start_quarter = (int(revenue_start_q_index) % 4) + 1
+inventory_purchase_q_index = max(0, int(revenue_start_q_index) - 1)
+inventory_year = 2026 + (int(inventory_purchase_q_index) // 4)
+inventory_quarter = (int(inventory_purchase_q_index) % 4) + 1
 
 # OpEx fixed for simplicity (lean case)
 opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 2033: 15, 2034: 15, 2035: 15}
@@ -70,15 +74,15 @@ assumptions_rows = [
     {'Assumption': 'Base COGS per Kit (First Revenue Year)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': f"Base COGS per kit used in {revenue_start_year}; also used for inventory build"},
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
     {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'},
-    {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; first revenue year is {revenue_start_year}"},
-    {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Used first to fund certification / inventory outflows prior to {revenue_start_year}"},
-    {'Assumption': 'Debt Raised', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Drawn only if equity is exhausted prior to {revenue_start_year}"},
+    {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; go-live is {revenue_start_year}Q{revenue_start_quarter}"},
+    {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Used first to fund certification / inventory outflows prior to {revenue_start_year}Q{revenue_start_quarter}"},
+    {'Assumption': 'Max Debt Available', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Debt facility cap; model draws only what is needed prior to {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Debt APR', 'Value': f"{debt_apr * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to outstanding debt balance'},
-    {'Assumption': 'Debt Term', 'Value': f"{debt_term_years}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"Debt amortizes annually beginning in {revenue_start_year}"},
+    {'Assumption': 'Debt Term', 'Value': f"{debt_term_years}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"Debt amortizes quarterly beginning in {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Income Tax Rate', 'Value': f"{tax_rate * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Taxes apply only when taxable income is positive'},
     {'Assumption': 'WACC', 'Value': f"{wacc * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used to discount unlevered free cash flows in DCF'},
     {'Assumption': 'Terminal Growth Rate', 'Value': f"{terminal_growth * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used for terminal value if WACC > terminal growth'},
-    {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"Purchased in {inventory_year} at base COGS per kit"},
+    {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"Purchased in {inventory_year}Q{inventory_quarter} (1 quarter before go-live; 25% of full build)"},
     {'Assumption': 'Total Addressable Market', 'Value': f"{int(tam_shipsets)}", 'Units': 'Shipsets', 'Type': 'Slider', 'Notes': 'Caps cumulative shipsets'},
     {'Assumption': 'First-Year Install Rate (Q1)', 'Value': f"{int(q1_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
     {'Assumption': 'First-Year Install Rate (Q2)', 'Value': f"{int(q2_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
@@ -96,132 +100,212 @@ assumptions_rows = [
 assumptions_df = pd.DataFrame(assumptions_rows, columns=['Assumption', 'Value', 'Units', 'Type', 'Notes'])
 
 # Calculations
-data = {}
-cum_shipsets = 0
-cum_cash = 0
+annual_data = {}
+cum_shipsets = 0.0
+cum_cash = 0.0
+
 debt_balance = 0.0
 debt_draw_remaining = float(debt_amount)
 debt_drawn_total = 0.0
+
 investor_cum_cf = 0.0
 equity_cum_cf = 0.0
 equity_reserve = float(cert_readiness_cost)
-
 equity_amount = float(cert_readiness_cost)
 
-if float(debt_apr) == 0:
-    annual_debt_payment = (float(debt_amount) / float(debt_term_years)) if float(debt_term_years) > 0 else 0.0
-else:
-    annual_debt_payment = float(debt_amount) * float(debt_apr) / (1 - (1 + float(debt_apr)) ** (-float(debt_term_years)))
+debt_rate_q = float(debt_apr) / 4.0
+term_quarters = int(debt_term_years) * 4
+quarterly_debt_payment = None
 
-for yr in years:
-    if yr < revenue_start_year:
-        new_installs = 0
-        revenue = 0
-        cogs = 0
-        inventory = (inventory_kits_pre_install * base_cogs / 1e6) if yr == inventory_year else 0
-        capex = float(cert_spend_by_year.get(yr, 0.0))
+year_sums = None
+year_taxable_income = 0.0
+
+for i in range(len(years) * 4):
+    yr = years[0] + (i // 4)
+    qtr = (i % 4) + 1
+
+    if year_sums is None:
+        year_sums = {
+            'New Installs': 0.0,
+            'Revenue ($M)': 0.0,
+            'COGS ($M)': 0.0,
+            'Gross Profit ($M)': 0.0,
+            'OpEx ($M)': 0.0,
+            'EBITDA ($M)': 0.0,
+            'CapEx/Inv ($M)': 0.0,
+            'Free Cash Flow ($M)': 0.0,
+            'Taxes ($M)': 0.0,
+            'FCF After Tax ($M)': 0.0,
+            'Debt Draw ($M)': 0.0,
+            'Debt Payment ($M)': 0.0,
+            'Debt Interest ($M)': 0.0,
+            'Debt Principal ($M)': 0.0,
+            'Net Cash After Debt ($M)': 0.0,
+            'Net Cash Change ($M)': 0.0,
+            'Debt Investor CF ($M)': 0.0,
+            'Equity Contribution ($M)': 0.0,
+            'Equity CF ($M)': 0.0,
+        }
+        year_taxable_income = 0.0
+
+    capex = 0.0
+    inventory = 0.0
+
+    if i < revenue_start_q_index:
+        new_installs = 0.0
+        revenue = 0.0
+        cogs = 0.0
+        if i < int(cert_duration_quarters):
+            capex = float(cert_spend_per_quarter)
+        if i == int(inventory_purchase_q_index):
+            inventory = float(0.25 * inventory_kits_pre_install * base_cogs / 1e6)
     else:
-        year_idx = yr - revenue_start_year
-        fuel_price = base_fuel_price * (1 + fuel_inflation) ** year_idx
-        annual_fuel_spend = block_hours * base_fuel_burn_gal_per_hour * fuel_price
-        annual_saving = annual_fuel_spend * fuel_saving_pct
-        rev_per_shipset = annual_saving * split_pct  # in $
-        
-        if yr == revenue_start_year:
-            new_installs = q1_installs + q2_installs + q3_installs + q4_installs
-        elif yr == (revenue_start_year + 1):
-            new_installs = 910  # Fixed from previous ramp
+        year_idx = int(yr - revenue_start_year)
+        fuel_price = float(base_fuel_price) * float((1 + float(fuel_inflation)) ** int(year_idx))
+        quarter_block_hours = float(block_hours) / 4.0
+        quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
+        quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
+        rev_per_shipset = quarter_saving * float(split_pct)
+
+        rev_q_idx = int(i - int(revenue_start_q_index))
+        if rev_q_idx == 0:
+            new_installs = float(q1_installs)
+        elif rev_q_idx == 1:
+            new_installs = float(q2_installs)
+        elif rev_q_idx == 2:
+            new_installs = float(q3_installs)
+        elif rev_q_idx == 3:
+            new_installs = float(q4_installs)
         else:
-            new_installs = 1040  # Steady state
-        
-        new_installs = min(new_installs, tam_shipsets - cum_shipsets)  # Cap at TAM
-        cum_shipsets += new_installs
-        revenue = cum_shipsets * rev_per_shipset / 1e6  # $M
-        
-        cogs_per_kit = base_cogs * (1 + cogs_inflation) ** year_idx
-        cogs = new_installs * cogs_per_kit / 1e6  # $M
-        
-        capex = 0
-        inventory = 0
-    
-    gross_profit = revenue - cogs
-    opex_yr = opex.get(yr, 15)  # Flat after
-    ebitda = gross_profit - opex_yr
-    total_outflow = capex + inventory
-    fcf = ebitda - total_outflow
+            revenue_year = int(rev_q_idx // 4)
+            if revenue_year == 1:
+                new_installs = 910.0 / 4.0
+            else:
+                new_installs = 1040.0 / 4.0
+
+        remaining_shipsets = max(0.0, float(tam_shipsets) - float(cum_shipsets))
+        new_installs = min(float(new_installs), float(remaining_shipsets))
+
+        cum_shipsets_beg = float(cum_shipsets)
+        cum_shipsets_end = float(cum_shipsets_beg) + float(new_installs)
+        avg_shipsets = float(cum_shipsets_beg) + 0.5 * float(new_installs)
+        cum_shipsets = float(cum_shipsets_end)
+
+        revenue = float(avg_shipsets) * float(rev_per_shipset) / 1e6
+
+        cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
+        cogs = float(new_installs) * float(cogs_per_kit) / 1e6
+
+    gross_profit = float(revenue) - float(cogs)
+    opex_q = float(opex.get(int(yr), 15)) / 4.0
+    ebitda = float(gross_profit) - float(opex_q)
+    total_outflow = float(capex) + float(inventory)
+    fcf = float(ebitda) - float(total_outflow)
 
     equity_contribution = 0.0
     debt_draw = 0.0
-    if yr < revenue_start_year:
+    if i < revenue_start_q_index:
         equity_contribution = min(float(equity_reserve), float(total_outflow))
-        equity_reserve -= equity_contribution
+        equity_reserve -= float(equity_contribution)
         remaining_outflow = float(total_outflow) - float(equity_contribution)
-        if debt_draw_remaining > 0 and remaining_outflow > 0:
+        if float(debt_draw_remaining) > 0 and float(remaining_outflow) > 0:
             debt_draw = min(float(debt_draw_remaining), float(remaining_outflow))
-            debt_draw_remaining -= debt_draw
-            debt_drawn_total += debt_draw
+            debt_draw_remaining -= float(debt_draw)
+            debt_drawn_total += float(debt_draw)
 
-    debt_balance_beg = debt_balance
-    debt_balance = debt_balance + debt_draw
+    debt_balance = float(debt_balance) + float(debt_draw)
 
     debt_interest = 0.0
     debt_principal = 0.0
     debt_payment = 0.0
-    if yr >= revenue_start_year and debt_balance > 0:
-        debt_interest = debt_balance * float(debt_apr)
-        debt_payment = min(annual_debt_payment, debt_balance + debt_interest)
-        debt_principal = max(0.0, min(debt_balance, debt_payment - debt_interest))
-        debt_balance = max(0.0, debt_balance - debt_principal)
+    if i >= revenue_start_q_index and float(debt_balance) > 0:
+        if quarterly_debt_payment is None:
+            if float(debt_rate_q) == 0:
+                quarterly_debt_payment = (float(debt_balance) / float(term_quarters)) if int(term_quarters) > 0 else 0.0
+            else:
+                quarterly_debt_payment = float(debt_balance) * float(debt_rate_q) / (1 - (1 + float(debt_rate_q)) ** (-float(term_quarters)))
 
-    taxable_income = ebitda - debt_interest
-    taxes = max(0.0, taxable_income) * float(tax_rate)
-    fcf_after_tax = ebitda - taxes - total_outflow
-    net_cash_after_debt = fcf_after_tax + debt_draw - debt_payment
-    net_cash_change = net_cash_after_debt + equity_contribution
-    cum_cash += net_cash_change
+        debt_interest = float(debt_balance) * float(debt_rate_q)
+        debt_payment = min(float(quarterly_debt_payment), float(debt_balance) + float(debt_interest))
+        debt_principal = max(0.0, min(float(debt_balance), float(debt_payment) - float(debt_interest)))
+        debt_balance = max(0.0, float(debt_balance) - float(debt_principal))
 
-    investor_cf = (-debt_draw) + debt_payment
-    investor_cum_cf += investor_cf
-    investor_roi = (investor_cum_cf / float(debt_drawn_total)) if float(debt_drawn_total) > 0 else 0.0
+    taxable_income_q = float(ebitda) - float(debt_interest)
+    year_taxable_income += float(taxable_income_q)
 
-    if yr < revenue_start_year:
-        equity_cf = -equity_contribution
+    taxes = 0.0
+    if int(qtr) == 4:
+        taxes = max(0.0, float(year_taxable_income)) * float(tax_rate)
+
+    fcf_after_tax = float(ebitda) - float(taxes) - float(total_outflow)
+    net_cash_after_debt = float(fcf_after_tax) + float(debt_draw) - float(debt_payment)
+    net_cash_change = float(net_cash_after_debt) + float(equity_contribution)
+    cum_cash += float(net_cash_change)
+
+    investor_cf = (-float(debt_draw)) + float(debt_payment)
+    investor_cum_cf += float(investor_cf)
+    investor_roi = (float(investor_cum_cf) / float(debt_drawn_total)) if float(debt_drawn_total) > 0 else 0.0
+
+    if i < revenue_start_q_index:
+        equity_cf = -float(equity_contribution)
     else:
-        equity_cf = net_cash_after_debt
+        equity_cf = float(net_cash_after_debt)
 
-    equity_cum_cf += equity_cf
-    equity_roi = (equity_cum_cf / float(equity_amount)) if float(equity_amount) > 0 else 0.0
-    
-    data[yr] = {
-        'New Installs': new_installs,
-        'Cum Shipsets': cum_shipsets,
-        'Revenue ($M)': round(revenue, 1),
-        'COGS ($M)': round(cogs, 1),
-        'Gross Profit ($M)': round(gross_profit, 1),
-        'OpEx ($M)': opex_yr,
-        'EBITDA ($M)': round(ebitda, 1),
-        'CapEx/Inv ($M)': round(total_outflow, 1),
-        'Free Cash Flow ($M)': round(fcf, 1),
-        'Taxes ($M)': round(taxes, 1),
-        'FCF After Tax ($M)': round(fcf_after_tax, 1),
-        'Debt Draw ($M)': round(debt_draw, 1),
-        'Debt Payment ($M)': round(debt_payment, 1),
-        'Debt Interest ($M)': round(debt_interest, 1),
-        'Debt Principal ($M)': round(debt_principal, 1),
-        'Debt Balance ($M)': round(debt_balance, 1),
-        'Net Cash After Debt ($M)': round(net_cash_after_debt, 1),
-        'Net Cash Change ($M)': round(net_cash_change, 1),
-        'Cumulative Cash ($M)': round(cum_cash, 1),
-        'Debt Investor CF ($M)': round(investor_cf, 1),
-        'Debt Investor Cum CF ($M)': round(investor_cum_cf, 1),
-        'Debt Investor ROI (%)': round(investor_roi * 100, 1),
-        'Equity Contribution ($M)': round(equity_contribution, 1),
-        'Equity CF ($M)': round(equity_cf, 1),
-        'Equity Cum CF ($M)': round(equity_cum_cf, 1),
-        'Equity ROI (%)': round(equity_roi * 100, 1),
-    }
+    equity_cum_cf += float(equity_cf)
+    equity_roi = (float(equity_cum_cf) / float(equity_amount)) if float(equity_amount) > 0 else 0.0
 
-df = pd.DataFrame(data).T
+    year_sums['New Installs'] += float(new_installs)
+    year_sums['Revenue ($M)'] += float(revenue)
+    year_sums['COGS ($M)'] += float(cogs)
+    year_sums['Gross Profit ($M)'] += float(gross_profit)
+    year_sums['OpEx ($M)'] += float(opex_q)
+    year_sums['EBITDA ($M)'] += float(ebitda)
+    year_sums['CapEx/Inv ($M)'] += float(total_outflow)
+    year_sums['Free Cash Flow ($M)'] += float(fcf)
+    year_sums['Taxes ($M)'] += float(taxes)
+    year_sums['FCF After Tax ($M)'] += float(fcf_after_tax)
+    year_sums['Debt Draw ($M)'] += float(debt_draw)
+    year_sums['Debt Payment ($M)'] += float(debt_payment)
+    year_sums['Debt Interest ($M)'] += float(debt_interest)
+    year_sums['Debt Principal ($M)'] += float(debt_principal)
+    year_sums['Net Cash After Debt ($M)'] += float(net_cash_after_debt)
+    year_sums['Net Cash Change ($M)'] += float(net_cash_change)
+    year_sums['Debt Investor CF ($M)'] += float(investor_cf)
+    year_sums['Equity Contribution ($M)'] += float(equity_contribution)
+    year_sums['Equity CF ($M)'] += float(equity_cf)
+
+    if int(qtr) == 4:
+        annual_data[int(yr)] = {
+            'New Installs': int(round(float(year_sums['New Installs']), 0)),
+            'Cum Shipsets': int(round(float(cum_shipsets), 0)),
+            'Revenue ($M)': round(float(year_sums['Revenue ($M)']), 1),
+            'COGS ($M)': round(float(year_sums['COGS ($M)']), 1),
+            'Gross Profit ($M)': round(float(year_sums['Gross Profit ($M)']), 1),
+            'OpEx ($M)': round(float(year_sums['OpEx ($M)']), 1),
+            'EBITDA ($M)': round(float(year_sums['EBITDA ($M)']), 1),
+            'CapEx/Inv ($M)': round(float(year_sums['CapEx/Inv ($M)']), 1),
+            'Free Cash Flow ($M)': round(float(year_sums['Free Cash Flow ($M)']), 1),
+            'Taxes ($M)': round(float(year_sums['Taxes ($M)']), 1),
+            'FCF After Tax ($M)': round(float(year_sums['FCF After Tax ($M)']), 1),
+            'Debt Draw ($M)': round(float(year_sums['Debt Draw ($M)']), 1),
+            'Debt Payment ($M)': round(float(year_sums['Debt Payment ($M)']), 1),
+            'Debt Interest ($M)': round(float(year_sums['Debt Interest ($M)']), 1),
+            'Debt Principal ($M)': round(float(year_sums['Debt Principal ($M)']), 1),
+            'Debt Balance ($M)': round(float(debt_balance), 1),
+            'Net Cash After Debt ($M)': round(float(year_sums['Net Cash After Debt ($M)']), 1),
+            'Net Cash Change ($M)': round(float(year_sums['Net Cash Change ($M)']), 1),
+            'Cumulative Cash ($M)': round(float(cum_cash), 1),
+            'Debt Investor CF ($M)': round(float(year_sums['Debt Investor CF ($M)']), 1),
+            'Debt Investor Cum CF ($M)': round(float(investor_cum_cf), 1),
+            'Debt Investor ROI (%)': round(float(investor_roi) * 100, 1),
+            'Equity Contribution ($M)': round(float(year_sums['Equity Contribution ($M)']), 1),
+            'Equity CF ($M)': round(float(year_sums['Equity CF ($M)']), 1),
+            'Equity Cum CF ($M)': round(float(equity_cum_cf), 1),
+            'Equity ROI (%)': round(float(equity_roi) * 100, 1),
+        }
+        year_sums = None
+
+df = pd.DataFrame(annual_data).T
 
 net_income = df['EBITDA ($M)'] - df['Debt Interest ($M)'] - df['Taxes ($M)']
 pl_df = df[['Revenue ($M)', 'COGS ($M)', 'Gross Profit ($M)', 'OpEx ($M)', 'EBITDA ($M)', 'Debt Interest ($M)', 'Taxes ($M)']].copy()
@@ -250,12 +334,16 @@ cf_df = pd.DataFrame({
     'Ending Cash ($M)': df['Cumulative Cash ($M)'],
 }, index=df.index)
 
-unlevered_taxes = (df['EBITDA ($M)'].clip(lower=0.0) * float(tax_rate)).round(1)
-unlevered_fcf = (df['EBITDA ($M)'] - unlevered_taxes - df['CapEx/Inv ($M)']).round(1)
+unlevered_taxes_raw = (df['EBITDA ($M)'].clip(lower=0.0) * float(tax_rate)).astype(float)
+unlevered_fcf_raw = (df['EBITDA ($M)'] - unlevered_taxes_raw - df['CapEx/Inv ($M)']).astype(float)
 discount_year0 = int(df.index.min())
 discount_t = (df.index - discount_year0 + 1).astype(int)
 discount_factor = pd.Series((1 / (1 + float(wacc)) ** discount_t).astype(float), index=df.index)
-pv_fcf = (unlevered_fcf.astype(float) * discount_factor).round(1)
+pv_fcf_raw = (unlevered_fcf_raw * discount_factor).astype(float)
+
+unlevered_taxes = unlevered_taxes_raw.round(1)
+unlevered_fcf = unlevered_fcf_raw.round(1)
+pv_fcf = pv_fcf_raw.round(1)
 
 tv = np.nan
 pv_tv = np.nan
@@ -269,7 +357,7 @@ dcf_df = pd.DataFrame({
     'PV of FCF ($M)': pv_fcf,
 }, index=df.index)
 
-pv_explicit = float(pv_fcf.sum())
+pv_explicit = float(pv_fcf_raw.sum())
 enterprise_value = pv_explicit + (float(pv_tv) if not np.isnan(pv_tv) else 0.0)
 
 dcf_summary_df = pd.DataFrame({

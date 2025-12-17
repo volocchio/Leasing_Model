@@ -31,8 +31,9 @@ def _to_display_value(kind: str, v: float) -> float:
 def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     years = list(range(2026, 2036))
 
+    revenue_start_q_index = int(params["revenue_start_q_index"])
+    inventory_purchase_q_index = int(params["inventory_purchase_q_index"])
     revenue_start_year = int(params["revenue_start_year"])
-    inventory_year = int(params["inventory_year"])
 
     fuel_inflation = float(params["fuel_inflation"])
     cogs_inflation = float(params["cogs_inflation"])
@@ -55,7 +56,8 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     q4_installs = int(params["q4_installs"])
 
     cert_readiness_cost = float(params["cert_readiness_cost"])
-    cert_spend_by_year = dict(params["cert_spend_by_year"])
+    cert_duration_quarters = int(params["cert_duration_quarters"])
+    cert_spend_per_quarter = (float(cert_readiness_cost) / float(cert_duration_quarters)) if int(cert_duration_quarters) > 0 else 0.0
 
     debt_amount = float(params["debt_amount"])
     debt_apr = float(params["debt_apr"])
@@ -67,7 +69,9 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
 
     opex = dict(params["opex"])
 
-    cum_shipsets = 0
+    annual_data: Dict[int, Dict[str, float]] = {}
+
+    cum_shipsets = 0.0
     cum_cash = 0.0
 
     debt_balance = 0.0
@@ -80,102 +84,144 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     equity_reserve = float(cert_readiness_cost)
     equity_amount = float(cert_readiness_cost)
 
-    if float(debt_apr) == 0:
-        annual_debt_payment = (float(debt_amount) / float(debt_term_years)) if float(debt_term_years) > 0 else 0.0
-    else:
-        annual_debt_payment = float(debt_amount) * float(debt_apr) / (1 - (1 + float(debt_apr)) ** (-float(debt_term_years)))
+    debt_rate_q = float(debt_apr) / 4.0
+    term_quarters = int(debt_term_years) * 4
+    quarterly_debt_payment = None
 
-    rows = []
+    year_sums = None
+    year_taxable_income = 0.0
 
-    for yr in years:
-        if yr < revenue_start_year:
-            new_installs = 0
+    for i in range(len(years) * 4):
+        yr = years[0] + (i // 4)
+        qtr = (i % 4) + 1
+
+        if year_sums is None:
+            year_sums = {
+                "EBITDA": 0.0,
+                "CapExInv": 0.0,
+                "Taxes": 0.0,
+            }
+            year_taxable_income = 0.0
+
+        capex = 0.0
+        inventory = 0.0
+
+        if i < revenue_start_q_index:
+            new_installs = 0.0
             revenue = 0.0
             cogs = 0.0
-            inventory = (inventory_kits_pre_install * base_cogs / 1e6) if yr == inventory_year else 0.0
-            capex = float(cert_spend_by_year.get(yr, 0.0))
+            if i < int(cert_duration_quarters):
+                capex = float(cert_spend_per_quarter)
+            if i == int(inventory_purchase_q_index):
+                inventory = float(0.25 * inventory_kits_pre_install * base_cogs / 1e6)
         else:
-            year_idx = yr - revenue_start_year
-            fuel_price = base_fuel_price * (1 + fuel_inflation) ** year_idx
-            annual_fuel_spend = block_hours * base_fuel_burn_gal_per_hour * fuel_price
-            annual_saving = annual_fuel_spend * fuel_saving_pct
-            rev_per_shipset = annual_saving * split_pct
+            year_idx = int(yr - revenue_start_year)
+            fuel_price = float(base_fuel_price) * float((1 + float(fuel_inflation)) ** int(year_idx))
+            quarter_block_hours = float(block_hours) / 4.0
+            quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
+            quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
+            rev_per_shipset = quarter_saving * float(split_pct)
 
-            if yr == revenue_start_year:
-                new_installs = q1_installs + q2_installs + q3_installs + q4_installs
-            elif yr == (revenue_start_year + 1):
-                new_installs = 910
+            rev_q_idx = int(i - int(revenue_start_q_index))
+            if rev_q_idx == 0:
+                new_installs = float(q1_installs)
+            elif rev_q_idx == 1:
+                new_installs = float(q2_installs)
+            elif rev_q_idx == 2:
+                new_installs = float(q3_installs)
+            elif rev_q_idx == 3:
+                new_installs = float(q4_installs)
             else:
-                new_installs = 1040
+                revenue_year = int(rev_q_idx // 4)
+                if revenue_year == 1:
+                    new_installs = 910.0 / 4.0
+                else:
+                    new_installs = 1040.0 / 4.0
 
-            new_installs = min(new_installs, tam_shipsets - cum_shipsets)
-            cum_shipsets += new_installs
+            remaining_shipsets = max(0.0, float(tam_shipsets) - float(cum_shipsets))
+            new_installs = min(float(new_installs), float(remaining_shipsets))
 
-            revenue = cum_shipsets * rev_per_shipset / 1e6
+            cum_shipsets_beg = float(cum_shipsets)
+            cum_shipsets_end = float(cum_shipsets_beg) + float(new_installs)
+            avg_shipsets = float(cum_shipsets_beg) + 0.5 * float(new_installs)
+            cum_shipsets = float(cum_shipsets_end)
 
-            cogs_per_kit = base_cogs * (1 + cogs_inflation) ** year_idx
-            cogs = new_installs * cogs_per_kit / 1e6
+            revenue = float(avg_shipsets) * float(rev_per_shipset) / 1e6
 
-            capex = 0.0
-            inventory = 0.0
+            cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
+            cogs = float(new_installs) * float(cogs_per_kit) / 1e6
 
-        gross_profit = revenue - cogs
-        opex_yr = float(opex.get(yr, 15))
-        ebitda = gross_profit - opex_yr
-        total_outflow = capex + inventory
+        gross_profit = float(revenue) - float(cogs)
+        opex_q = float(opex.get(int(yr), 15)) / 4.0
+        ebitda = float(gross_profit) - float(opex_q)
+        total_outflow = float(capex) + float(inventory)
 
         equity_contribution = 0.0
         debt_draw = 0.0
-        if yr < revenue_start_year:
+        if i < revenue_start_q_index:
             equity_contribution = min(float(equity_reserve), float(total_outflow))
-            equity_reserve -= equity_contribution
+            equity_reserve -= float(equity_contribution)
             remaining_outflow = float(total_outflow) - float(equity_contribution)
-            if debt_draw_remaining > 0 and remaining_outflow > 0:
+            if float(debt_draw_remaining) > 0 and float(remaining_outflow) > 0:
                 debt_draw = min(float(debt_draw_remaining), float(remaining_outflow))
-                debt_draw_remaining -= debt_draw
-                debt_drawn_total += debt_draw
+                debt_draw_remaining -= float(debt_draw)
+                debt_drawn_total += float(debt_draw)
 
-        debt_balance = debt_balance + debt_draw
+        debt_balance = float(debt_balance) + float(debt_draw)
 
         debt_interest = 0.0
-        debt_principal = 0.0
         debt_payment = 0.0
-        if yr >= revenue_start_year and debt_balance > 0:
-            debt_interest = debt_balance * float(debt_apr)
-            debt_payment = min(annual_debt_payment, debt_balance + debt_interest)
-            debt_principal = max(0.0, min(debt_balance, debt_payment - debt_interest))
-            debt_balance = max(0.0, debt_balance - debt_principal)
+        if i >= revenue_start_q_index and float(debt_balance) > 0:
+            if quarterly_debt_payment is None:
+                if float(debt_rate_q) == 0:
+                    quarterly_debt_payment = (float(debt_balance) / float(term_quarters)) if int(term_quarters) > 0 else 0.0
+                else:
+                    quarterly_debt_payment = float(debt_balance) * float(debt_rate_q) / (1 - (1 + float(debt_rate_q)) ** (-float(term_quarters)))
 
-        taxable_income = ebitda - debt_interest
-        taxes = max(0.0, taxable_income) * float(tax_rate)
-        fcf_after_tax = ebitda - taxes - total_outflow
-        net_cash_after_debt = fcf_after_tax + debt_draw - debt_payment
-        net_cash_change = net_cash_after_debt + equity_contribution
-        cum_cash += net_cash_change
+            debt_interest = float(debt_balance) * float(debt_rate_q)
+            debt_payment = min(float(quarterly_debt_payment), float(debt_balance) + float(debt_interest))
+            debt_principal = max(0.0, min(float(debt_balance), float(debt_payment) - float(debt_interest)))
+            debt_balance = max(0.0, float(debt_balance) - float(debt_principal))
 
-        investor_cf = (-debt_draw) + debt_payment
-        investor_cum_cf += investor_cf
+        taxable_income_q = float(ebitda) - float(debt_interest)
+        year_taxable_income += float(taxable_income_q)
 
-        if yr < revenue_start_year:
-            equity_cf = -equity_contribution
+        taxes = 0.0
+        if int(qtr) == 4:
+            taxes = max(0.0, float(year_taxable_income)) * float(tax_rate)
+
+        fcf_after_tax = float(ebitda) - float(taxes) - float(total_outflow)
+        net_cash_after_debt = float(fcf_after_tax) + float(debt_draw) - float(debt_payment)
+        net_cash_change = float(net_cash_after_debt) + float(equity_contribution)
+        cum_cash += float(net_cash_change)
+
+        investor_cf = (-float(debt_draw)) + float(debt_payment)
+        investor_cum_cf += float(investor_cf)
+
+        if i < revenue_start_q_index:
+            equity_cf = -float(equity_contribution)
         else:
-            equity_cf = net_cash_after_debt
+            equity_cf = float(net_cash_after_debt)
 
-        equity_cum_cf += equity_cf
+        equity_cum_cf += float(equity_cf)
 
-        rows.append(
-            {
-                "Year": yr,
-                "EBITDA": float(ebitda),
-                "CapExInv": float(total_outflow),
-                "Taxes": float(taxes),
-                "UnleveredFCF": float(ebitda - max(0.0, ebitda) * float(tax_rate) - float(total_outflow)),
+        year_sums["EBITDA"] += float(ebitda)
+        year_sums["CapExInv"] += float(total_outflow)
+        year_sums["Taxes"] += float(taxes)
+
+        if int(qtr) == 4:
+            annual_data[int(yr)] = {
+                "EBITDA": float(year_sums["EBITDA"]),
+                "CapExInv": float(year_sums["CapExInv"]),
+                "Taxes": float(year_sums["Taxes"]),
             }
-        )
+            year_sums = None
 
-    df = pd.DataFrame(rows).set_index("Year")
+    df = pd.DataFrame.from_dict(annual_data, orient="index")
+    df.index.name = "Year"
 
-    unlevered_fcf = df["UnleveredFCF"].astype(float)
+    unlevered_taxes = (df["EBITDA"].clip(lower=0.0) * float(tax_rate)).astype(float)
+    unlevered_fcf = (df["EBITDA"].astype(float) - unlevered_taxes - df["CapExInv"].astype(float)).astype(float)
 
     discount_year0 = int(df.index.min())
     discount_t = (df.index - discount_year0 + 1).astype(int)
@@ -226,7 +272,7 @@ def build_baseline_params() -> Dict[str, Any]:
     inventory_kits_pre_install = st.sidebar.slider("Inventory Kits Before First Install", min_value=50, max_value=200, value=90, step=10)
     tam_shipsets = st.sidebar.slider("Total Addressable Market (Max Shipsets in 10 Years)", min_value=1000, max_value=10000, value=7500, step=500)
 
-    debt_amount = st.sidebar.slider("Debt Raised ($M)", min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
+    debt_amount = st.sidebar.slider("Max Debt Available ($M)", min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
     debt_apr = st.sidebar.slider("Debt APR (%)", min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
     debt_term_years = st.sidebar.slider("Debt Term (Years)", min_value=1, max_value=15, value=7, step=1)
 
@@ -240,14 +286,10 @@ def build_baseline_params() -> Dict[str, Any]:
     q3_installs = st.sidebar.slider("Q3 Installs", min_value=0, max_value=200, value=98, step=10)
     q4_installs = st.sidebar.slider("Q4 Installs and beyond", min_value=0, max_value=200, value=96, step=10)
 
-    cert_spend_by_year: Dict[int, float] = {}
-    cert_spend_per_quarter = (float(cert_readiness_cost) / float(cert_duration_quarters)) if int(cert_duration_quarters) > 0 else 0.0
-    for q in range(int(cert_duration_quarters)):
-        yr = 2026 + (q // 4)
-        cert_spend_by_year[yr] = cert_spend_by_year.get(yr, 0.0) + cert_spend_per_quarter
-
-    revenue_start_year = 2026 + int(np.ceil(float(cert_duration_quarters) / 4.0))
-    inventory_year = max(2026, revenue_start_year - 1)
+    revenue_start_q_index = int(cert_duration_quarters)
+    revenue_start_year = 2026 + (int(revenue_start_q_index) // 4)
+    inventory_purchase_q_index = max(0, int(revenue_start_q_index) - 1)
+    inventory_year = 2026 + (int(inventory_purchase_q_index) // 4)
 
     opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 2033: 15, 2034: 15, 2035: 15}
 
@@ -263,7 +305,8 @@ def build_baseline_params() -> Dict[str, Any]:
         "cert_readiness_cost": float(cert_readiness_cost),
         "cert_duration_years": float(cert_duration_years),
         "cert_duration_quarters": int(cert_duration_quarters),
-        "cert_spend_by_year": cert_spend_by_year,
+        "revenue_start_q_index": int(revenue_start_q_index),
+        "inventory_purchase_q_index": int(inventory_purchase_q_index),
         "revenue_start_year": int(revenue_start_year),
         "inventory_year": int(inventory_year),
         "inventory_kits_pre_install": int(inventory_kits_pre_install),
@@ -284,23 +327,23 @@ def build_baseline_params() -> Dict[str, Any]:
 
 def build_driver_catalog(baseline: Dict[str, Any]) -> List[DriverSpec]:
     return [
+        DriverSpec("wacc", "WACC (%)", "%", "percent"),
+        DriverSpec("base_fuel_price", "Fuel Price ($/gal)", "$/gal", "float"),
+        DriverSpec("cert_duration_years", "Certification Duration (Years)", "years", "float"),
+        DriverSpec("fuel_savings_split_to_tamarack", "Fuel Savings Split to Tamarack (%)", "%", "percent"),
         DriverSpec("fuel_inflation", "Annual Fuel Inflation", "%", "percent"),
-        DriverSpec("base_fuel_price", "Base Fuel Price (First Revenue Year)", "$/gal", "float"),
         DriverSpec("block_hours", "Block Hours per Aircraft per Year", "hours", "int"),
         DriverSpec("base_fuel_burn_gal_per_hour", "Base Fuel Burn", "gal/hour", "int"),
         DriverSpec("cogs_inflation", "Annual COGS Inflation", "%", "percent"),
         DriverSpec("base_cogs", "Base COGS per Kit (First Revenue Year)", "$/kit", "int"),
         DriverSpec("fuel_saving_pct", "Fuel Savings % per Aircraft", "%", "percent"),
-        DriverSpec("fuel_savings_split_to_tamarack", "Fuel Savings Split to Tamarack", "%", "percent"),
         DriverSpec("cert_readiness_cost", "Equity", "$M", "float"),
-        DriverSpec("cert_duration_years", "Certification Duration", "years", "float"),
         DriverSpec("inventory_kits_pre_install", "Inventory Kits Before First Install", "kits", "int"),
         DriverSpec("tam_shipsets", "Total Addressable Market", "shipsets", "int"),
-        DriverSpec("debt_amount", "Debt Raised", "$M", "float"),
+        DriverSpec("debt_amount", "Max Debt Available", "$M", "float"),
         DriverSpec("debt_apr", "Debt APR", "%", "percent"),
         DriverSpec("debt_term_years", "Debt Term", "years", "int"),
         DriverSpec("tax_rate", "Income Tax Rate", "%", "percent"),
-        DriverSpec("wacc", "WACC", "%", "percent"),
         DriverSpec("terminal_growth", "Terminal Growth Rate", "%", "percent"),
     ]
 
@@ -332,16 +375,13 @@ def _apply_driver_value(params: Dict[str, Any], spec: DriverSpec, disp_value: fl
         params["cert_duration_years"] = float(disp_value)
         params["cert_duration_quarters"] = int(qtrs)
 
-        cert_readiness_cost = float(params["cert_readiness_cost"])
-        cert_spend_by_year: Dict[int, float] = {}
-        cert_spend_per_quarter = (float(cert_readiness_cost) / float(qtrs)) if int(qtrs) > 0 else 0.0
-        for q in range(int(qtrs)):
-            yr = 2026 + (q // 4)
-            cert_spend_by_year[yr] = cert_spend_by_year.get(yr, 0.0) + cert_spend_per_quarter
-        revenue_start_year = 2026 + int(np.ceil(float(qtrs) / 4.0))
-        inventory_year = max(2026, revenue_start_year - 1)
+        revenue_start_q_index = int(qtrs)
+        revenue_start_year = 2026 + (int(revenue_start_q_index) // 4)
+        inventory_purchase_q_index = max(0, int(revenue_start_q_index) - 1)
+        inventory_year = 2026 + (int(inventory_purchase_q_index) // 4)
 
-        params["cert_spend_by_year"] = cert_spend_by_year
+        params["revenue_start_q_index"] = int(revenue_start_q_index)
+        params["inventory_purchase_q_index"] = int(inventory_purchase_q_index)
         params["revenue_start_year"] = int(revenue_start_year)
         params["inventory_year"] = int(inventory_year)
 
@@ -417,22 +457,37 @@ drivers = build_driver_catalog(baseline_params)
 driver_by_key = {d.key: d for d in drivers}
 driver_labels = {d.key: d.label for d in drivers}
 
+keys_all = [d.key for d in drivers]
+
+def _key_index(keys: List[str], desired: str, fallback: int = 0) -> int:
+    return keys.index(desired) if desired in keys else fallback
+
 col_a, col_b, col_c = st.columns(3)
 with col_a:
-    d1_key = st.selectbox("Driver 1", options=[d.key for d in drivers], format_func=lambda k: driver_labels[k], index=0)
+    d1_options = [d.key for d in drivers]
+    d1_key = st.selectbox(
+        "Driver 1",
+        options=d1_options,
+        format_func=lambda k: driver_labels[k],
+        index=_key_index(d1_options, "wacc", 0),
+    )
 with col_b:
+    d2_options = [d.key for d in drivers if d.key != d1_key]
+    d2_default = "base_fuel_price" if "base_fuel_price" in d2_options else (d2_options[0] if len(d2_options) > 0 else d1_key)
     d2_key = st.selectbox(
         "Driver 2",
-        options=[d.key for d in drivers if d.key != d1_key],
+        options=d2_options,
         format_func=lambda k: driver_labels[k],
-        index=0,
+        index=_key_index(d2_options, d2_default, 0),
     )
 with col_c:
+    d3_options = [d.key for d in drivers if d.key not in {d1_key, d2_key}]
+    d3_default = "cert_duration_years" if "cert_duration_years" in d3_options else (d3_options[0] if len(d3_options) > 0 else d1_key)
     d3_key = st.selectbox(
         "Driver 3",
-        options=[d.key for d in drivers if d.key not in {d1_key, d2_key}],
+        options=d3_options,
         format_func=lambda k: driver_labels[k],
-        index=0,
+        index=_key_index(d3_options, d3_default, 0),
     )
 
 d1 = driver_by_key[d1_key]
