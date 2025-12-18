@@ -398,6 +398,7 @@ def build_driver_catalog(baseline: Dict[str, Any]) -> List[DriverSpec]:
         DriverSpec("cert_readiness_cost", "Equity", "$M", "float"),
         DriverSpec("inventory_kits_pre_install", "Inventory Kits Before First Install", "kits", "int"),
         DriverSpec("tam_shipsets", "Total Addressable Market", "shipsets", "int"),
+        DriverSpec("tam_penetration_pct", "TAM Penetration (%)", "%", "percent"),
         DriverSpec("debt_amount", "Max Debt Available", "$M", "float"),
         DriverSpec("debt_apr", "Debt APR", "%", "percent"),
         DriverSpec("debt_term_years", "Debt Term", "years", "int"),
@@ -425,9 +426,6 @@ def _grid_values(spec: DriverSpec, low_disp: float, high_disp: float, points: in
 
 
 def _apply_driver_value(params: Dict[str, Any], spec: DriverSpec, disp_value: float) -> None:
-    internal = _to_internal_value(spec.kind, disp_value)
-    params[spec.key] = internal
-
     if spec.key == "cert_duration_years":
         qtrs = max(1, int(round(float(disp_value) * 4.0)))
         params["cert_duration_years"] = float(disp_value)
@@ -442,6 +440,75 @@ def _apply_driver_value(params: Dict[str, Any], spec: DriverSpec, disp_value: fl
         params["inventory_purchase_q_index"] = int(inventory_purchase_q_index)
         params["revenue_start_year"] = int(revenue_start_year)
         params["inventory_year"] = int(inventory_year)
+        return
+
+    internal = _to_internal_value(spec.kind, disp_value)
+    params[spec.key] = internal
+
+
+def _driver_disp_bounds(spec: DriverSpec) -> Tuple[float | None, float | None]:
+    bounds_by_key: Dict[str, Tuple[float, float]] = {
+        "fuel_saving_pct": (0.0, 30.0),
+        "base_fuel_price": (1.0, 6.0),
+        "fuel_inflation": (0.0, 15.0),
+        "block_hours": (1000.0, 5000.0),
+        "base_fuel_burn_gal_per_hour": (600.0, 1200.0),
+        "tam_shipsets": (1000.0, 10000.0),
+        "tam_penetration_pct": (0.0, 100.0),
+        "fuel_savings_split_to_tamarack": (0.0, 100.0),
+        "cert_duration_years": (0.25, 5.0),
+        "cert_readiness_cost": (100.0, 300.0),
+        "inventory_kits_pre_install": (50.0, 200.0),
+        "base_cogs": (100.0, 800.0),
+        "debt_amount": (0.0, 500.0),
+        "debt_apr": (0.0, 20.0),
+        "debt_term_years": (1.0, 15.0),
+        "tax_rate": (0.0, 40.0),
+        "wacc": (0.0, 30.0),
+        "terminal_growth": (-2.0, 8.0),
+    }
+
+    if spec.key not in bounds_by_key:
+        return (None, None)
+    return bounds_by_key[spec.key]
+
+
+def _default_range_for_driver(spec: DriverSpec, baseline_disp: float) -> Tuple[float, float]:
+    lo_bound, hi_bound = _driver_disp_bounds(spec)
+
+    if spec.key == "tam_penetration_pct":
+        low = float(baseline_disp) - 30.0
+        high = float(baseline_disp) + 30.0
+    elif spec.kind == "percent":
+        span = max(2.0, abs(float(baseline_disp)) * 0.25)
+        low = float(baseline_disp) - float(span)
+        high = float(baseline_disp) + float(span)
+    elif spec.kind in {"int", "thousands"}:
+        span = max(1.0, abs(float(baseline_disp)) * 0.25)
+        low = float(baseline_disp) - float(span)
+        high = float(baseline_disp) + float(span)
+    else:
+        span = max(0.1, abs(float(baseline_disp)) * 0.25)
+        low = float(baseline_disp) - float(span)
+        high = float(baseline_disp) + float(span)
+
+    if lo_bound is not None:
+        low = max(float(lo_bound), float(low))
+        high = max(float(lo_bound), float(high))
+    if hi_bound is not None:
+        low = min(float(hi_bound), float(low))
+        high = min(float(hi_bound), float(high))
+
+    if float(high) < float(low):
+        low, high = float(high), float(low)
+
+    if float(high) == float(low):
+        if hi_bound is not None:
+            high = min(float(hi_bound), float(low) + 1.0)
+        else:
+            high = float(low) + 1.0
+
+    return (float(low), float(high))
 
 
 def run_sensitivity(
@@ -542,7 +609,28 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
 
     drivers = build_driver_catalog(baseline_params)
     driver_by_key = {d.key: d for d in drivers}
-    driver_labels = {d.key: d.label for d in drivers}
+    driver_category = {
+        "fuel_saving_pct": "Fuel",
+        "block_hours": "Fuel",
+        "base_fuel_burn_gal_per_hour": "Fuel",
+        "base_fuel_price": "Fuel",
+        "fuel_inflation": "Fuel",
+        "tam_shipsets": "Market",
+        "tam_penetration_pct": "Market",
+        "fuel_savings_split_to_tamarack": "Commercial",
+        "cert_duration_years": "Program",
+        "inventory_kits_pre_install": "Program",
+        "cert_readiness_cost": "Financial",
+        "cogs_inflation": "Financial",
+        "base_cogs": "Financial",
+        "debt_amount": "Financial",
+        "debt_apr": "Financial",
+        "debt_term_years": "Financial",
+        "tax_rate": "Financial",
+        "wacc": "Financial",
+        "terminal_growth": "Financial",
+    }
+    driver_labels = {d.key: f"{driver_category.get(d.key, 'Other')} - {d.label}" for d in drivers}
 
     def _key_index(keys: List[str], desired: str, fallback: int = 0) -> int:
         return keys.index(desired) if desired in keys else fallback
@@ -577,7 +665,7 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
         )
     with col_c:
         st.markdown(
-            '<div style="font-size: 1.15rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 3</div>',
+            '<div style="font-size: 1.15rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 3 (Heatmap Slicer)</div>',
             unsafe_allow_html=True,
         )
         d3_options = [d.key for d in drivers if d.key not in {d1_key, d2_key}]
@@ -595,7 +683,8 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
     d3 = driver_by_key[d3_key]
 
     metrics = list(baseline_outputs.keys())
-    metric = st.selectbox("Metric to Sensitize", options=metrics, index=0)
+    metric_labels = {m: f"Financial - {m}" for m in metrics}
+    metric = st.selectbox("Metric to Sensitize", options=metrics, format_func=lambda m: metric_labels.get(m, m), index=0)
 
     b1 = _to_display_value(d1.kind, float(baseline_params[d1.key]))
     b2 = _to_display_value(d2.kind, float(baseline_params[d2.key]))
@@ -607,24 +696,42 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
             '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 1 Range</div>',
             unsafe_allow_html=True,
         )
-        d1_low = st.number_input("Low", value=float(b1) * 0.9, key=f"d1_low__{d1.key}")
-        d1_high = st.number_input("High", value=float(b1) * 1.1 if float(b1) != 0 else 1.0, key=f"d1_high__{d1.key}")
+        d1_low_default, d1_high_default = _default_range_for_driver(d1, float(b1))
+        d1_min, d1_max = _driver_disp_bounds(d1)
+        if d1_min is None or d1_max is None:
+            d1_low = st.number_input("Low", value=float(d1_low_default), key=f"d1_low__{d1.key}")
+            d1_high = st.number_input("High", value=float(d1_high_default), key=f"d1_high__{d1.key}")
+        else:
+            d1_low = st.number_input("Low", min_value=float(d1_min), max_value=float(d1_max), value=float(d1_low_default), key=f"d1_low__{d1.key}")
+            d1_high = st.number_input("High", min_value=float(d1_min), max_value=float(d1_max), value=float(d1_high_default), key=f"d1_high__{d1.key}")
         d1_points = st.number_input("Points", min_value=2, max_value=25, value=5, step=1, key=f"d1_points__{d1.key}")
     with cfg2:
         st.markdown(
             '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 2 Range</div>',
             unsafe_allow_html=True,
         )
-        d2_low = st.number_input("Low ", value=float(b2) * 0.9, key=f"d2_low__{d2.key}")
-        d2_high = st.number_input("High ", value=float(b2) * 1.1 if float(b2) != 0 else 1.0, key=f"d2_high__{d2.key}")
+        d2_low_default, d2_high_default = _default_range_for_driver(d2, float(b2))
+        d2_min, d2_max = _driver_disp_bounds(d2)
+        if d2_min is None or d2_max is None:
+            d2_low = st.number_input("Low ", value=float(d2_low_default), key=f"d2_low__{d2.key}")
+            d2_high = st.number_input("High ", value=float(d2_high_default), key=f"d2_high__{d2.key}")
+        else:
+            d2_low = st.number_input("Low ", min_value=float(d2_min), max_value=float(d2_max), value=float(d2_low_default), key=f"d2_low__{d2.key}")
+            d2_high = st.number_input("High ", min_value=float(d2_min), max_value=float(d2_max), value=float(d2_high_default), key=f"d2_high__{d2.key}")
         d2_points = st.number_input("Points ", min_value=2, max_value=25, value=5, step=1, key=f"d2_points__{d2.key}")
     with cfg3:
         st.markdown(
             '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 3 Range</div>',
             unsafe_allow_html=True,
         )
-        d3_low = st.number_input("Low  ", value=float(b3) * 0.9, key=f"d3_low__{d3.key}")
-        d3_high = st.number_input("High  ", value=float(b3) * 1.1 if float(b3) != 0 else 1.0, key=f"d3_high__{d3.key}")
+        d3_low_default, d3_high_default = _default_range_for_driver(d3, float(b3))
+        d3_min, d3_max = _driver_disp_bounds(d3)
+        if d3_min is None or d3_max is None:
+            d3_low = st.number_input("Low  ", value=float(d3_low_default), key=f"d3_low__{d3.key}")
+            d3_high = st.number_input("High  ", value=float(d3_high_default), key=f"d3_high__{d3.key}")
+        else:
+            d3_low = st.number_input("Low  ", min_value=float(d3_min), max_value=float(d3_max), value=float(d3_low_default), key=f"d3_low__{d3.key}")
+            d3_high = st.number_input("High  ", min_value=float(d3_min), max_value=float(d3_max), value=float(d3_high_default), key=f"d3_high__{d3.key}")
         d3_points = st.number_input("Points  ", min_value=2, max_value=25, value=3, step=1, key=f"d3_points__{d3.key}")
 
     d1_vals = _grid_values(d1, float(d1_low), float(d1_high), int(d1_points))
