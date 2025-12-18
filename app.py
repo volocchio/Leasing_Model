@@ -87,24 +87,23 @@ if mode == 'Sensitivity Study (3 Drivers, 1 Output)':
     st.stop()
 
 # Simplified Sidebar with key sliders
-st.sidebar.header('Key Assumptions')
-
-fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
-base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/gal)', min_value=1.0, max_value=6.0, value=2.75, step=0.1)
+st.sidebar.header('Fuel')
+fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
 block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=3500, step=200)
 base_fuel_burn_gal_per_hour = st.sidebar.slider('Base Fuel Burn (gal/hour)', min_value=600, max_value=1200, value=750, step=50)
-cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
-base_cogs_k = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($000)', min_value=100, max_value=800, value=400, step=10)
-base_cogs = float(base_cogs_k) * 1000.0
-fuel_saving_pct = st.sidebar.slider('Fuel Savings % per Aircraft', min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
+base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/gal)', min_value=1.0, max_value=6.0, value=2.75, step=0.1)
+fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
+
+st.sidebar.header('Market')
+tam_shipsets = st.sidebar.slider('Total Addressable Market (at Project Start)', min_value=1000, max_value=10000, value=7500, step=500)
+tam_penetration_pct = st.sidebar.slider('TAM Penetration (%)', min_value=0.0, max_value=100.0, value=100.0, step=1.0) / 100
+
+st.sidebar.header('Commercial')
 fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
-cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
 
-cert_duration_years = st.sidebar.slider('Certification Duration (Years)', min_value=0.25, max_value=5.0, value=2.0, step=0.25)
-cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
-
-inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=90, step=10)
-tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
+st.sidebar.header('CORSIA')
+corsia_split = st.sidebar.slider('CORSIA Exposure (Share to Tamarack) (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+carbon_price = st.sidebar.slider('Carbon Price ($/tCO2)', min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
 st.sidebar.header('Fleet Dynamics')
 fleet_retirements_per_month = st.sidebar.slider('Fleet Retirements (Aircraft per Month)', min_value=0, max_value=50, value=0, step=1)
@@ -114,6 +113,16 @@ if include_forward_fit:
 else:
     forward_fit_per_month = 0
 
+st.sidebar.header('Program')
+cert_duration_years = st.sidebar.slider('Certification Duration (Years)', min_value=0.25, max_value=5.0, value=2.0, step=0.25)
+cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
+inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=90, step=10)
+
+st.sidebar.header('Financial')
+cert_readiness_cost = st.sidebar.slider('Equity ($M)', min_value=100.0, max_value=300.0, value=180.0, step=10.0)
+cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
+base_cogs_k = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($000)', min_value=100, max_value=800, value=400, step=10)
+base_cogs = float(base_cogs_k) * 1000.0
 debt_amount = st.sidebar.slider('Max Debt Available ($M)', min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
 debt_apr = st.sidebar.slider('Debt APR (%)', min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
 debt_term_years = st.sidebar.slider('Debt Term (Years)', min_value=1, max_value=15, value=7, step=1)
@@ -121,7 +130,6 @@ tax_rate = st.sidebar.slider('Income Tax Rate (%)', min_value=0.0, max_value=40.
 wacc = st.sidebar.slider('WACC (%)', min_value=0.0, max_value=30.0, value=11.5, step=0.5) / 100
 terminal_growth = st.sidebar.slider('Terminal Growth Rate (%)', min_value=-2.0, max_value=8.0, value=3.0, step=0.5) / 100
 
-# Install rates for first 4 quarters (first install year, e.g., 2028)
 st.sidebar.header('First-Year Install Rates (Kits per Quarter)')
 q1_installs = st.sidebar.slider('Q1 Installs', min_value=0, max_value=200, value=98, step=10)  # ~10/week * 13 weeks / 4 = approx
 q2_installs = st.sidebar.slider('Q2 Installs', min_value=0, max_value=200, value=98, step=10)
@@ -160,6 +168,8 @@ assumptions_rows = [
     {'Assumption': 'Base COGS per Kit (First Revenue Year)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': f"Input slider is in $000; base COGS per kit used in {revenue_start_year}; also used for inventory build"},
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
     {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'},
+    {'Assumption': 'CORSIA Exposure (Share of Ops)', 'Value': f"{corsia_split * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Share of operations subject to CORSIA compliance pricing (applied starting in first revenue quarter)'},
+    {'Assumption': 'Carbon Price', 'Value': f"{carbon_price:.2f}", 'Units': '$/tCO2', 'Type': 'Slider', 'Notes': 'Used to value avoided CORSIA compliance cost (fuel savings + avoided CORSIA = total value created)'},
     {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; go-live is {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Used first to fund certification / inventory outflows prior to {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Max Debt Available', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Debt facility cap; model draws only what is needed prior to {revenue_start_year}Q{revenue_start_quarter}"},
@@ -170,6 +180,7 @@ assumptions_rows = [
     {'Assumption': 'Terminal Growth Rate', 'Value': f"{terminal_growth * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used for terminal value if WACC > terminal growth'},
     {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"Purchased in {inventory_year}Q{inventory_quarter} (1 quarter before go-live; 25% of full build)"},
     {'Assumption': 'Total Addressable Market', 'Value': f"{int(tam_shipsets)}", 'Units': 'Aircraft', 'Type': 'Slider', 'Notes': 'Starting eligible aftermarket fleet size (used as the base TAM)'},
+    {'Assumption': 'TAM Penetration', 'Value': f"{tam_penetration_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Caps maximum installable fleet at TAM * penetration'},
     {'Assumption': 'Fleet Retirements', 'Value': f"{int(fleet_retirements_per_month)}", 'Units': 'Aircraft/month', 'Type': 'Slider', 'Notes': 'Reduces the eligible fleet over time; also retires a proportional share of installed aircraft'},
     {'Assumption': 'Forward-Fit Enabled', 'Value': 'Yes' if bool(include_forward_fit) else 'No', 'Units': '', 'Type': 'Toggle', 'Notes': 'If enabled, adds new aircraft to the eligible fleet over time'},
     {'Assumption': 'Forward-Fit Additions', 'Value': f"{int(forward_fit_per_month)}", 'Units': 'Aircraft/month', 'Type': 'Slider', 'Notes': 'Adds to the eligible fleet over time when forward-fit is enabled'},
@@ -256,6 +267,9 @@ for i in range(len(years) * 4):
     installed_after_retire = min(float(installed_after_retire), float(fleet_size))
     installed_base = float(installed_after_retire)
 
+    installable_cap = float(fleet_size) * float(tam_penetration_pct)
+    installed_base = min(float(installed_base), float(installable_cap))
+
     if i < revenue_start_q_index:
         new_installs = 0.0
         revenue = 0.0
@@ -271,7 +285,13 @@ for i in range(len(years) * 4):
         quarter_block_hours = float(block_hours) / 4.0
         quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
         quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
-        rev_per_shipset = quarter_saving * float(split_pct)
+        quarter_gallons_burn = quarter_block_hours * float(base_fuel_burn_gal_per_hour)
+        gallons_saved = quarter_gallons_burn * float(fuel_saving_pct)
+        fuel_saved_tonnes = gallons_saved * 0.00304
+        co2_avoided_t = fuel_saved_tonnes * 3.16
+        corsia_value = co2_avoided_t * float(corsia_split) * float(carbon_price)
+        total_value_created = quarter_saving + corsia_value
+        rev_per_shipset = total_value_created * float(split_pct)
 
         rev_q_idx = int(i - int(revenue_start_q_index))
         planned_installs = 0.0
@@ -290,7 +310,7 @@ for i in range(len(years) * 4):
             else:
                 planned_installs = 1040.0 / 4.0
 
-        remaining_capacity = max(0.0, float(fleet_size) - float(installed_base))
+        remaining_capacity = max(0.0, float(installable_cap) - float(installed_base))
         new_installs = min(float(planned_installs), float(remaining_capacity))
 
         avg_installed = float(installed_base) + 0.5 * float(new_installs)

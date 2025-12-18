@@ -56,8 +56,12 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     fuel_saving_pct = float(params["fuel_saving_pct"])
     split_pct = float(params["fuel_savings_split_to_tamarack"])
 
+    corsia_split = float(params.get("corsia_split", 0.0))
+    carbon_price = float(params.get("carbon_price", 0.0))
+
     inventory_kits_pre_install = int(params["inventory_kits_pre_install"])
     tam_shipsets = int(params["tam_shipsets"])
+    tam_penetration_pct = float(params.get("tam_penetration_pct", 1.0))
 
     fleet_retirements_per_month = float(params.get("fleet_retirements_per_month", 0.0))
     include_forward_fit = bool(params.get("include_forward_fit", False))
@@ -134,6 +138,9 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
         installed_after_retire = min(float(installed_after_retire), float(fleet_size))
         installed_base = float(installed_after_retire)
 
+        installable_cap = float(fleet_size) * float(tam_penetration_pct)
+        installed_base = min(float(installed_base), float(installable_cap))
+
         if i < revenue_start_q_index:
             new_installs = 0.0
             revenue = 0.0
@@ -148,7 +155,13 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
             quarter_block_hours = float(block_hours) / 4.0
             quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
             quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
-            rev_per_shipset = quarter_saving * float(split_pct)
+            quarter_gallons_burn = quarter_block_hours * float(base_fuel_burn_gal_per_hour)
+            gallons_saved = quarter_gallons_burn * float(fuel_saving_pct)
+            fuel_saved_tonnes = gallons_saved * 0.00304
+            co2_avoided_t = fuel_saved_tonnes * 3.16
+            corsia_value = co2_avoided_t * float(corsia_split) * float(carbon_price)
+            total_value_created = quarter_saving + corsia_value
+            rev_per_shipset = total_value_created * float(split_pct)
 
             rev_q_idx = int(i - int(revenue_start_q_index))
             planned_installs = 0.0
@@ -167,7 +180,7 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
                 else:
                     planned_installs = 1040.0 / 4.0
 
-            remaining_capacity = max(0.0, float(fleet_size) - float(installed_base))
+            remaining_capacity = max(0.0, float(installable_cap) - float(installed_base))
             new_installs = min(float(planned_installs), float(remaining_capacity))
 
             avg_installed = float(installed_base) + 0.5 * float(new_installs)
@@ -281,24 +294,23 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
 def build_baseline_params() -> Dict[str, Any]:
     st.sidebar.header("Baseline Inputs")
 
-    fuel_inflation = st.sidebar.slider("Annual Fuel Inflation (%)", min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
-    base_fuel_price = st.sidebar.slider("Base Fuel Price at First Revenue Year ($/gal)", min_value=1.0, max_value=6.0, value=2.75, step=0.1)
+    st.sidebar.header("Fuel")
+    fuel_saving_pct = st.sidebar.slider("Fuel Savings % per Aircraft", min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
     block_hours = st.sidebar.slider("Block Hours per Aircraft per Year", min_value=1000, max_value=5000, value=3200, step=100)
     base_fuel_burn_gal_per_hour = st.sidebar.slider("Base Fuel Burn (gal/hour)", min_value=600, max_value=1200, value=750, step=50)
+    base_fuel_price = st.sidebar.slider("Base Fuel Price at First Revenue Year ($/gal)", min_value=1.0, max_value=6.0, value=2.75, step=0.1)
+    fuel_inflation = st.sidebar.slider("Annual Fuel Inflation (%)", min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
 
-    cogs_inflation = st.sidebar.slider("Annual COGS Inflation (%)", min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
-    base_cogs_k = st.sidebar.slider("Base COGS per Kit at First Revenue Year ($1000)", min_value=100, max_value=800, value=400, step=10)
-    base_cogs = float(base_cogs_k) * 1000.0
+    st.sidebar.header("Market")
+    tam_shipsets = st.sidebar.slider("Total Addressable Market (at Project Start)", min_value=1000, max_value=10000, value=7500, step=500)
+    tam_penetration_pct = st.sidebar.slider("TAM Penetration (%)", min_value=0.0, max_value=100.0, value=100.0, step=1.0) / 100
 
-    fuel_saving_pct = st.sidebar.slider("Fuel Savings % per Aircraft", min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
+    st.sidebar.header("Commercial")
     fuel_savings_split_to_tamarack = st.sidebar.slider("Fuel Savings Split to Tamarack (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 
-    cert_readiness_cost = st.sidebar.slider("Equity ($M)", min_value=100.0, max_value=300.0, value=180.0, step=10.0)
-    cert_duration_years = st.sidebar.slider("Certification Duration (Years)", min_value=0.25, max_value=5.0, value=2.0, step=0.25)
-    cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
-
-    inventory_kits_pre_install = st.sidebar.slider("Inventory Kits Before First Install", min_value=50, max_value=200, value=90, step=10)
-    tam_shipsets = st.sidebar.slider("Total Addressable Market (Max Shipsets in 10 Years)", min_value=1000, max_value=10000, value=7500, step=500)
+    st.sidebar.header("CORSIA")
+    corsia_split = st.sidebar.slider("CORSIA Exposure (Share of Ops) (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+    carbon_price = st.sidebar.slider("Carbon Price ($/tCO2)", min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
     st.sidebar.header("Fleet Dynamics")
     fleet_retirements_per_month = st.sidebar.slider("Fleet Retirements (Aircraft per Month)", min_value=0, max_value=50, value=0, step=1)
@@ -308,10 +320,19 @@ def build_baseline_params() -> Dict[str, Any]:
     else:
         forward_fit_per_month = 0
 
+    st.sidebar.header("Program")
+    cert_duration_years = st.sidebar.slider("Certification Duration (Years)", min_value=0.25, max_value=5.0, value=2.0, step=0.25)
+    cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
+    inventory_kits_pre_install = st.sidebar.slider("Inventory Kits Before First Install", min_value=50, max_value=200, value=90, step=10)
+
+    st.sidebar.header("Financial")
+    cert_readiness_cost = st.sidebar.slider("Equity ($M)", min_value=100.0, max_value=300.0, value=180.0, step=10.0)
+    cogs_inflation = st.sidebar.slider("Annual COGS Inflation (%)", min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
+    base_cogs_k = st.sidebar.slider("Base COGS per Kit at First Revenue Year ($1000)", min_value=100, max_value=800, value=400, step=10)
+    base_cogs = float(base_cogs_k) * 1000.0
     debt_amount = st.sidebar.slider("Max Debt Available ($M)", min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
     debt_apr = st.sidebar.slider("Debt APR (%)", min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
     debt_term_years = st.sidebar.slider("Debt Term (Years)", min_value=1, max_value=15, value=7, step=1)
-
     tax_rate = st.sidebar.slider("Income Tax Rate (%)", min_value=0.0, max_value=40.0, value=21.0, step=0.5) / 100
     wacc = st.sidebar.slider("WACC (%)", min_value=0.0, max_value=30.0, value=9.5, step=0.5) / 100
     terminal_growth = st.sidebar.slider("Terminal Growth Rate (%)", min_value=-2.0, max_value=8.0, value=2.5, step=0.5) / 100
@@ -338,6 +359,8 @@ def build_baseline_params() -> Dict[str, Any]:
         "base_cogs": float(base_cogs),
         "fuel_saving_pct": float(fuel_saving_pct),
         "fuel_savings_split_to_tamarack": float(fuel_savings_split_to_tamarack),
+        "corsia_split": float(corsia_split),
+        "carbon_price": float(carbon_price),
         "cert_readiness_cost": float(cert_readiness_cost),
         "cert_duration_years": float(cert_duration_years),
         "cert_duration_quarters": int(cert_duration_quarters),
@@ -347,6 +370,7 @@ def build_baseline_params() -> Dict[str, Any]:
         "inventory_year": int(inventory_year),
         "inventory_kits_pre_install": int(inventory_kits_pre_install),
         "tam_shipsets": int(tam_shipsets),
+        "tam_penetration_pct": float(tam_penetration_pct),
         "fleet_retirements_per_month": float(fleet_retirements_per_month),
         "include_forward_fit": bool(include_forward_fit),
         "forward_fit_per_month": float(forward_fit_per_month),
