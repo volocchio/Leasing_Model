@@ -52,11 +52,35 @@ div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {
   background: #DBEAFE;
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.18);
 }
+
+div[data-testid="stMetric"] {
+  background: #ECFDF5;
+  border: 3px solid #10B981;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 12px 22px rgba(16, 185, 129, 0.18);
+}
+div[data-testid="stMetric"] label {
+  font-weight: 900 !important;
+  font-size: 1.05rem !important;
+  color: #065F46 !important;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+  font-weight: 900 !important;
+  font-size: 2.4rem !important;
+  color: #064E3B !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
-mode = st.radio('Mode', options=['Standalone Model', 'Sensitivity Study (3 Drivers, 1 Output)'], horizontal=True)
+
+col_mode, col_ev = st.columns([3, 2])
+with col_mode:
+    mode = st.radio('Mode', options=['Standalone Model', 'Sensitivity Study (3 Drivers, 1 Output)'], horizontal=True)
+with col_ev:
+    ev_placeholder = st.empty()
+    ev_placeholder.metric(label="Enterprise Value ($M)", value="—")
 
 if mode == 'Sensitivity Study (3 Drivers, 1 Output)':
     render_sensitivity_app(baseline_params=None, show_title=False)
@@ -414,6 +438,8 @@ dcf_df = pd.DataFrame({
 pv_explicit = float(pv_fcf_raw.sum())
 enterprise_value = pv_explicit + (float(pv_tv) if not np.isnan(pv_tv) else 0.0)
 
+ev_placeholder.metric(label="Enterprise Value ($M)", value=f"{enterprise_value:,.1f}")
+
 dcf_summary_df = pd.DataFrame({
     'PV Explicit FCF ($M)': [round(pv_explicit, 1)],
     'Terminal Value ($M)': [round(0.0 if np.isnan(tv) else float(tv), 1)],
@@ -440,7 +466,6 @@ st.write(f"WACC: {wacc * 100:.2f}%")
 st.write(f"Terminal growth rate: {terminal_growth * 100:.2f}%")
 st.write(f"PV of explicit period FCF ($M): {pv_explicit:.1f}")
 st.write(f"PV of terminal value ($M): {0.0 if np.isnan(pv_tv) else pv_tv:.1f}")
-st.write(f"Enterprise value ($M): {enterprise_value:.1f}")
 st.dataframe(dcf_summary_df, use_container_width=True)
 
 # Nice Plots
@@ -614,32 +639,3 @@ div[data-testid="stDownloadButton"] > button:focus {
 
 st.header('Assumptions Appendix')
 st.dataframe(assumptions_df, use_container_width=True)
-
-st.header('Enterprise Value')
-st.markdown(
-    """
-<style>
-div[data-testid="stMetric"] {
-  background: #ECFDF5;
-  border: 3px solid #10B981;
-  border-radius: 16px;
-  padding: 16px 18px;
-  box-shadow: 0 12px 22px rgba(16, 185, 129, 0.18);
-}
-div[data-testid="stMetric"] label {
-  font-weight: 900 !important;
-  font-size: 1.05rem !important;
-  color: #065F46 !important;
-}
-div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-  font-weight: 900 !important;
-  font-size: 2.4rem !important;
-  color: #064E3B !important;
-}
-</style>
-    """,
-    unsafe_allow_html=True,
-)
-col_ev_l, col_ev, col_ev_r = st.columns([1, 2, 1])
-with col_ev:
-    st.metric(label="Enterprise Value ($M)", value=f"{enterprise_value:,.1f}")
