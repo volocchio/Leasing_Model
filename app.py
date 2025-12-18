@@ -14,13 +14,13 @@ _asset_dir = Path(__file__).resolve().parent
 _img_a320 = _asset_dir / 'A320Tam.jpg'
 _img_logo = _asset_dir / 'logo.png'
 
-col_img_1, col_img_2, _ = st.columns([1, 1, 6])
+col_img_1, col_img_2, _ = st.columns([2, 2, 4])
 with col_img_1:
     if _img_a320.exists():
-        st.image(str(_img_a320), width=140)
+        st.image(str(_img_a320), width=340)
 with col_img_2:
     if _img_logo.exists():
-        st.image(str(_img_logo), width=140)
+        st.image(str(_img_logo), width=500)
 
 st.title('Tamarack Aerospace A320 Financial Model - Leasing, Split Savings')
 
@@ -575,12 +575,42 @@ if st.button('Download PDF Report'):
         pdf.savefig(fig_ev, bbox_inches='tight')
     
     pdf_buffer.seek(0)
-    st.download_button(
-        label="Download PDF",
-        data=pdf_buffer,
-        file_name="Tamarack_Financial_Report.pdf",
-        mime="application/pdf"
+    st.markdown(
+        """
+<style>
+div[data-testid="stDownloadButton"] > button {
+  width: auto;
+  min-width: 360px;
+  background: #1D4ED8 !important;
+  color: #FFFFFF !important;
+  border: 2px solid #1E40AF !important;
+  border-radius: 12px !important;
+  padding: 0.85rem 1.25rem !important;
+  font-size: 1.15rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.2px !important;
+  box-shadow: 0 10px 18px rgba(29, 78, 216, 0.18) !important;
+}
+div[data-testid="stDownloadButton"] > button:hover {
+  background: #1E40AF !important;
+  border-color: #1E3A8A !important;
+}
+div[data-testid="stDownloadButton"] > button:focus {
+  box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.25) !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
     )
+    _, c_btn, _ = st.columns([1, 2, 1])
+    with c_btn:
+        st.download_button(
+            label="Download Standalone Model PDF",
+            data=pdf_buffer,
+            file_name="Tamarack_Financial_Report.pdf",
+            mime="application/pdf",
+            use_container_width=False,
+        )
 
 st.header('Assumptions Appendix')
 st.dataframe(assumptions_df, use_container_width=True)

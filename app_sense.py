@@ -559,25 +559,25 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
             '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 1 Range</div>',
             unsafe_allow_html=True,
         )
-        d1_low = st.number_input("Low", value=float(b1) * 0.9, key="d1_low")
-        d1_high = st.number_input("High", value=float(b1) * 1.1 if float(b1) != 0 else 1.0, key="d1_high")
-        d1_points = st.number_input("Points", min_value=2, max_value=25, value=5, step=1, key="d1_points")
+        d1_low = st.number_input("Low", value=float(b1) * 0.9, key=f"d1_low__{d1.key}")
+        d1_high = st.number_input("High", value=float(b1) * 1.1 if float(b1) != 0 else 1.0, key=f"d1_high__{d1.key}")
+        d1_points = st.number_input("Points", min_value=2, max_value=25, value=5, step=1, key=f"d1_points__{d1.key}")
     with cfg2:
         st.markdown(
             '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 2 Range</div>',
             unsafe_allow_html=True,
         )
-        d2_low = st.number_input("Low ", value=float(b2) * 0.9, key="d2_low")
-        d2_high = st.number_input("High ", value=float(b2) * 1.1 if float(b2) != 0 else 1.0, key="d2_high")
-        d2_points = st.number_input("Points ", min_value=2, max_value=25, value=5, step=1, key="d2_points")
+        d2_low = st.number_input("Low ", value=float(b2) * 0.9, key=f"d2_low__{d2.key}")
+        d2_high = st.number_input("High ", value=float(b2) * 1.1 if float(b2) != 0 else 1.0, key=f"d2_high__{d2.key}")
+        d2_points = st.number_input("Points ", min_value=2, max_value=25, value=5, step=1, key=f"d2_points__{d2.key}")
     with cfg3:
         st.markdown(
             '<div style="font-size: 1.05rem; font-weight: 800; margin-bottom: 0.25rem;">Driver 3 Range</div>',
             unsafe_allow_html=True,
         )
-        d3_low = st.number_input("Low  ", value=float(b3) * 0.9, key="d3_low")
-        d3_high = st.number_input("High  ", value=float(b3) * 1.1 if float(b3) != 0 else 1.0, key="d3_high")
-        d3_points = st.number_input("Points  ", min_value=2, max_value=25, value=3, step=1, key="d3_points")
+        d3_low = st.number_input("Low  ", value=float(b3) * 0.9, key=f"d3_low__{d3.key}")
+        d3_high = st.number_input("High  ", value=float(b3) * 1.1 if float(b3) != 0 else 1.0, key=f"d3_high__{d3.key}")
+        d3_points = st.number_input("Points  ", min_value=2, max_value=25, value=3, step=1, key=f"d3_points__{d3.key}")
 
     d1_vals = _grid_values(d1, float(d1_low), float(d1_high), int(d1_points))
     d2_vals = _grid_values(d2, float(d2_low), float(d2_high), int(d2_points))
@@ -710,13 +710,42 @@ div[data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] {
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
-    st.download_button(
-        label="Download Sensitivity PDF",
-        data=buf.getvalue(),
-        file_name="sensitivity_study.pdf",
-        mime="application/pdf",
-        use_container_width=True,
+    st.markdown(
+        """
+<style>
+div[data-testid="stDownloadButton"] > button {
+  width: auto;
+  min-width: 360px;
+  background: #1D4ED8 !important;
+  color: #FFFFFF !important;
+  border: 2px solid #1E40AF !important;
+  border-radius: 12px !important;
+  padding: 0.85rem 1.25rem !important;
+  font-size: 1.15rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.2px !important;
+  box-shadow: 0 10px 18px rgba(29, 78, 216, 0.18) !important;
+}
+div[data-testid="stDownloadButton"] > button:hover {
+  background: #1E40AF !important;
+  border-color: #1E3A8A !important;
+}
+div[data-testid="stDownloadButton"] > button:focus {
+  box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.25) !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
     )
+    _, c_btn, _ = st.columns([1, 2, 1])
+    with c_btn:
+        st.download_button(
+            label="Download Sensitivity Study PDF",
+            data=buf.getvalue(),
+            file_name="sensitivity_study.pdf",
+            mime="application/pdf",
+            use_container_width=False,
+        )
 
 
 if __name__ == "__main__":
