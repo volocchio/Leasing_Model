@@ -260,15 +260,10 @@ for i in range(len(years) * 4):
     retire_q = min(float(retire_q), float(fleet_beg)) if float(fleet_beg) > 0 else 0.0
     forward_fit_q = (float(forward_fit_per_month) * 3.0) if bool(include_forward_fit) else 0.0
 
-    installed_retired = (float(installed_beg) * float(retire_q) / float(fleet_beg)) if float(fleet_beg) > 0 else float(installed_beg)
-    installed_after_retire = max(0.0, float(installed_beg) - float(installed_retired))
-
     fleet_size = max(0.0, float(fleet_beg) - float(retire_q) + float(forward_fit_q))
-    installed_after_retire = min(float(installed_after_retire), float(fleet_size))
-    installed_base = float(installed_after_retire)
+    installed_base = float(installed_beg)
 
     installable_cap = float(fleet_size) * float(tam_penetration_pct)
-    installed_base = min(float(installed_base), float(installable_cap))
 
     if i < revenue_start_q_index:
         new_installs = 0.0
