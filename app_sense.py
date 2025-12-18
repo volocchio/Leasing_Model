@@ -435,7 +435,7 @@ def run_sensitivity(
             elif spec.key == "cert_duration_years":
                 df[col] = df[col].astype(float).round(2)
             else:
-                df[col] = df[col].astype(float).round(1)
+                df[col] = df[col].astype(float).round(2)
     if "Value" in df.columns:
         df["Value"] = df["Value"].astype(float).round(1)
     return df
@@ -633,29 +633,49 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
         f"**Driver 3 (Tabs/Slices):** {d3.label}"
     )
 
-    if d3.key == "cert_duration_years":
-        st.markdown(
-            """
+    st.markdown(
+        """
 <style>
-div[data-baseweb="tab-list"] {
-  gap: 10px;
+div[data-testid="stTabs"] div[data-baseweb="tab-list"],
+div[data-testid="stTabs"] div[data-baseweb="tab-list"]:has(button[role="tab"]),
+div[data-testid="stTabs"] div[data-baseweb="tab-list"]:has(button[data-baseweb="tab"]) {
+  gap: 12px !important;
+  padding: 10px 10px !important;
+  background: #FFF1D6 !important;
+  border: 3px solid #F97316 !important;
+  border-radius: 14px !important;
 }
-div[data-baseweb="tab-list"] button[role="tab"] {
-  font-weight: 700 !important;
-  border: 2px solid #FF8C00 !important;
-  border-radius: 10px !important;
-  background: #FFF7E6 !important;
-  padding: 6px 12px !important;
+
+div[data-testid="stTabs"] button[role="tab"],
+div[data-testid="stTabs"] button[data-baseweb="tab"] {
+  font-weight: 900 !important;
+  font-size: 1.02rem !important;
+  color: #7C2D12 !important;
+  border: 2px solid #FDBA74 !important;
+  border-radius: 12px !important;
+  background: #FFFFFF !important;
+  padding: 10px 16px !important;
 }
-div[data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] {
-  background: #FFE0B2 !important;
-  border-color: #E65100 !important;
-  box-shadow: 0 0 0 3px rgba(230, 81, 0, 0.20);
+
+div[data-testid="stTabs"] button[role="tab"]:hover,
+div[data-testid="stTabs"] button[data-baseweb="tab"]:hover {
+  border-color: #F97316 !important;
+  background: #FFF7ED !important;
+}
+
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"],
+div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+  background: #FFEDD5 !important;
+  border-color: #9A3412 !important;
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 5px rgba(154, 52, 18, 0.18),
+    inset 0 -4px 0 0 #9A3412;
 }
 </style>
-            """,
-            unsafe_allow_html=True,
-        )
+        """,
+        unsafe_allow_html=True,
+    )
 
     d3_disp_vals = [_disp_key(d3, float(v)) for v in d3_vals]
     seen = set()
