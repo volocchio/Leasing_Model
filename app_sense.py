@@ -59,6 +59,10 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     inventory_kits_pre_install = int(params["inventory_kits_pre_install"])
     tam_shipsets = int(params["tam_shipsets"])
 
+    fleet_retirements_per_month = float(params.get("fleet_retirements_per_month", 0.0))
+    include_forward_fit = bool(params.get("include_forward_fit", False))
+    forward_fit_per_month = float(params.get("forward_fit_per_month", 0.0))
+
     q1_installs = int(params["q1_installs"])
     q2_installs = int(params["q2_installs"])
     q3_installs = int(params["q3_installs"])
@@ -80,7 +84,8 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
 
     annual_data: Dict[int, Dict[str, float]] = {}
 
-    cum_shipsets = 0.0
+    fleet_size = float(tam_shipsets)
+    installed_base = 0.0
     cum_cash = 0.0
 
     debt_balance = 0.0
@@ -115,6 +120,20 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
         capex = 0.0
         inventory = 0.0
 
+        fleet_beg = float(fleet_size)
+        installed_beg = float(installed_base)
+
+        retire_q = float(fleet_retirements_per_month) * 3.0
+        retire_q = min(float(retire_q), float(fleet_beg)) if float(fleet_beg) > 0 else 0.0
+        forward_fit_q = (float(forward_fit_per_month) * 3.0) if bool(include_forward_fit) else 0.0
+
+        installed_retired = (float(installed_beg) * float(retire_q) / float(fleet_beg)) if float(fleet_beg) > 0 else float(installed_beg)
+        installed_after_retire = max(0.0, float(installed_beg) - float(installed_retired))
+
+        fleet_size = max(0.0, float(fleet_beg) - float(retire_q) + float(forward_fit_q))
+        installed_after_retire = min(float(installed_after_retire), float(fleet_size))
+        installed_base = float(installed_after_retire)
+
         if i < revenue_start_q_index:
             new_installs = 0.0
             revenue = 0.0
@@ -132,30 +151,29 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
             rev_per_shipset = quarter_saving * float(split_pct)
 
             rev_q_idx = int(i - int(revenue_start_q_index))
+            planned_installs = 0.0
             if rev_q_idx == 0:
-                new_installs = float(q1_installs)
+                planned_installs = float(q1_installs)
             elif rev_q_idx == 1:
-                new_installs = float(q2_installs)
+                planned_installs = float(q2_installs)
             elif rev_q_idx == 2:
-                new_installs = float(q3_installs)
+                planned_installs = float(q3_installs)
             elif rev_q_idx == 3:
-                new_installs = float(q4_installs)
+                planned_installs = float(q4_installs)
             else:
                 revenue_year = int(rev_q_idx // 4)
                 if revenue_year == 1:
-                    new_installs = 910.0 / 4.0
+                    planned_installs = 910.0 / 4.0
                 else:
-                    new_installs = 1040.0 / 4.0
+                    planned_installs = 1040.0 / 4.0
 
-            remaining_shipsets = max(0.0, float(tam_shipsets) - float(cum_shipsets))
-            new_installs = min(float(new_installs), float(remaining_shipsets))
+            remaining_capacity = max(0.0, float(fleet_size) - float(installed_base))
+            new_installs = min(float(planned_installs), float(remaining_capacity))
 
-            cum_shipsets_beg = float(cum_shipsets)
-            cum_shipsets_end = float(cum_shipsets_beg) + float(new_installs)
-            avg_shipsets = float(cum_shipsets_beg) + 0.5 * float(new_installs)
-            cum_shipsets = float(cum_shipsets_end)
+            avg_installed = float(installed_base) + 0.5 * float(new_installs)
+            installed_base = float(installed_base) + float(new_installs)
 
-            revenue = float(avg_shipsets) * float(rev_per_shipset) / 1e6
+            revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
 
             cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
             cogs = float(new_installs) * float(cogs_per_kit) / 1e6
@@ -282,6 +300,14 @@ def build_baseline_params() -> Dict[str, Any]:
     inventory_kits_pre_install = st.sidebar.slider("Inventory Kits Before First Install", min_value=50, max_value=200, value=90, step=10)
     tam_shipsets = st.sidebar.slider("Total Addressable Market (Max Shipsets in 10 Years)", min_value=1000, max_value=10000, value=7500, step=500)
 
+    st.sidebar.header("Fleet Dynamics")
+    fleet_retirements_per_month = st.sidebar.slider("Fleet Retirements (Aircraft per Month)", min_value=0, max_value=50, value=0, step=1)
+    include_forward_fit = st.sidebar.checkbox("Include Forward-Fit Aircraft Entering Market", value=False)
+    if include_forward_fit:
+        forward_fit_per_month = st.sidebar.slider("Forward-Fit Additions (Aircraft per Month)", min_value=0, max_value=50, value=0, step=1)
+    else:
+        forward_fit_per_month = 0
+
     debt_amount = st.sidebar.slider("Max Debt Available ($M)", min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
     debt_apr = st.sidebar.slider("Debt APR (%)", min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
     debt_term_years = st.sidebar.slider("Debt Term (Years)", min_value=1, max_value=15, value=7, step=1)
@@ -321,6 +347,9 @@ def build_baseline_params() -> Dict[str, Any]:
         "inventory_year": int(inventory_year),
         "inventory_kits_pre_install": int(inventory_kits_pre_install),
         "tam_shipsets": int(tam_shipsets),
+        "fleet_retirements_per_month": float(fleet_retirements_per_month),
+        "include_forward_fit": bool(include_forward_fit),
+        "forward_fit_per_month": float(forward_fit_per_month),
         "debt_amount": float(debt_amount),
         "debt_apr": float(debt_apr),
         "debt_term_years": int(debt_term_years),

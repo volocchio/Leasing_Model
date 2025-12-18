@@ -91,7 +91,7 @@ st.sidebar.header('Key Assumptions')
 
 fuel_inflation = st.sidebar.slider('Annual Fuel Inflation (%)', min_value=0.0, max_value=15.0, value=4.5, step=0.5) / 100
 base_fuel_price = st.sidebar.slider('Base Fuel Price at First Revenue Year ($/gal)', min_value=1.0, max_value=6.0, value=2.75, step=0.1)
-block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=3200, step=100)
+block_hours = st.sidebar.slider('Block Hours per Aircraft per Year', min_value=1000, max_value=5000, value=3500, step=200)
 base_fuel_burn_gal_per_hour = st.sidebar.slider('Base Fuel Burn (gal/hour)', min_value=600, max_value=1200, value=750, step=50)
 cogs_inflation = st.sidebar.slider('Annual COGS Inflation (%)', min_value=0.0, max_value=15.0, value=4.0, step=0.5) / 100
 base_cogs_k = st.sidebar.slider('Base COGS per Kit at First Revenue Year ($000)', min_value=100, max_value=800, value=400, step=10)
@@ -105,6 +105,14 @@ cert_duration_quarters = max(1, int(round(float(cert_duration_years) * 4.0)))
 
 inventory_kits_pre_install = st.sidebar.slider('Inventory Kits Before First Install', min_value=50, max_value=200, value=90, step=10)
 tam_shipsets = st.sidebar.slider('Total Addressable Market (Max Shipsets in 10 Years)', min_value=1000, max_value=10000, value=7500, step=500)
+
+st.sidebar.header('Fleet Dynamics')
+fleet_retirements_per_month = st.sidebar.slider('Fleet Retirements (Aircraft per Month)', min_value=0, max_value=50, value=0, step=1)
+include_forward_fit = st.sidebar.checkbox('Include Forward-Fit Aircraft Entering Market', value=False)
+if include_forward_fit:
+    forward_fit_per_month = st.sidebar.slider('Forward-Fit Additions (Aircraft per Month)', min_value=0, max_value=50, value=0, step=1)
+else:
+    forward_fit_per_month = 0
 
 debt_amount = st.sidebar.slider('Max Debt Available ($M)', min_value=0.0, max_value=500.0, value=float(cert_readiness_cost), step=10.0)
 debt_apr = st.sidebar.slider('Debt APR (%)', min_value=0.0, max_value=20.0, value=10.0, step=0.5) / 100
@@ -161,7 +169,10 @@ assumptions_rows = [
     {'Assumption': 'WACC', 'Value': f"{wacc * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used to discount unlevered free cash flows in DCF'},
     {'Assumption': 'Terminal Growth Rate', 'Value': f"{terminal_growth * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Used for terminal value if WACC > terminal growth'},
     {'Assumption': 'Inventory Kits Before First Install', 'Value': f"{int(inventory_kits_pre_install)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"Purchased in {inventory_year}Q{inventory_quarter} (1 quarter before go-live; 25% of full build)"},
-    {'Assumption': 'Total Addressable Market', 'Value': f"{int(tam_shipsets)}", 'Units': 'Shipsets', 'Type': 'Slider', 'Notes': 'Caps cumulative shipsets'},
+    {'Assumption': 'Total Addressable Market', 'Value': f"{int(tam_shipsets)}", 'Units': 'Aircraft', 'Type': 'Slider', 'Notes': 'Starting eligible aftermarket fleet size (used as the base TAM)'},
+    {'Assumption': 'Fleet Retirements', 'Value': f"{int(fleet_retirements_per_month)}", 'Units': 'Aircraft/month', 'Type': 'Slider', 'Notes': 'Reduces the eligible fleet over time; also retires a proportional share of installed aircraft'},
+    {'Assumption': 'Forward-Fit Enabled', 'Value': 'Yes' if bool(include_forward_fit) else 'No', 'Units': '', 'Type': 'Toggle', 'Notes': 'If enabled, adds new aircraft to the eligible fleet over time'},
+    {'Assumption': 'Forward-Fit Additions', 'Value': f"{int(forward_fit_per_month)}", 'Units': 'Aircraft/month', 'Type': 'Slider', 'Notes': 'Adds to the eligible fleet over time when forward-fit is enabled'},
     {'Assumption': 'First-Year Install Rate (Q1)', 'Value': f"{int(q1_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
     {'Assumption': 'First-Year Install Rate (Q2)', 'Value': f"{int(q2_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
     {'Assumption': 'First-Year Install Rate (Q3)', 'Value': f"{int(q3_installs)}", 'Units': 'Kits', 'Type': 'Slider', 'Notes': f"First install year ({revenue_start_year}) quarterly installs"},
@@ -179,7 +190,9 @@ assumptions_df = pd.DataFrame(assumptions_rows, columns=['Assumption', 'Value', 
 
 # Calculations
 annual_data = {}
-cum_shipsets = 0.0
+
+fleet_size = float(tam_shipsets)
+installed_base = 0.0
 cum_cash = 0.0
 
 debt_balance = 0.0
@@ -229,10 +242,25 @@ for i in range(len(years) * 4):
     capex = 0.0
     inventory = 0.0
 
+    fleet_beg = float(fleet_size)
+    installed_beg = float(installed_base)
+
+    retire_q = float(fleet_retirements_per_month) * 3.0
+    retire_q = min(float(retire_q), float(fleet_beg)) if float(fleet_beg) > 0 else 0.0
+    forward_fit_q = (float(forward_fit_per_month) * 3.0) if bool(include_forward_fit) else 0.0
+
+    installed_retired = (float(installed_beg) * float(retire_q) / float(fleet_beg)) if float(fleet_beg) > 0 else float(installed_beg)
+    installed_after_retire = max(0.0, float(installed_beg) - float(installed_retired))
+
+    fleet_size = max(0.0, float(fleet_beg) - float(retire_q) + float(forward_fit_q))
+    installed_after_retire = min(float(installed_after_retire), float(fleet_size))
+    installed_base = float(installed_after_retire)
+
     if i < revenue_start_q_index:
         new_installs = 0.0
         revenue = 0.0
         cogs = 0.0
+
         if i < int(cert_duration_quarters):
             capex = float(cert_spend_per_quarter)
         if i == int(inventory_purchase_q_index):
@@ -246,30 +274,29 @@ for i in range(len(years) * 4):
         rev_per_shipset = quarter_saving * float(split_pct)
 
         rev_q_idx = int(i - int(revenue_start_q_index))
+        planned_installs = 0.0
         if rev_q_idx == 0:
-            new_installs = float(q1_installs)
+            planned_installs = float(q1_installs)
         elif rev_q_idx == 1:
-            new_installs = float(q2_installs)
+            planned_installs = float(q2_installs)
         elif rev_q_idx == 2:
-            new_installs = float(q3_installs)
+            planned_installs = float(q3_installs)
         elif rev_q_idx == 3:
-            new_installs = float(q4_installs)
+            planned_installs = float(q4_installs)
         else:
             revenue_year = int(rev_q_idx // 4)
             if revenue_year == 1:
-                new_installs = 910.0 / 4.0
+                planned_installs = 910.0 / 4.0
             else:
-                new_installs = 1040.0 / 4.0
+                planned_installs = 1040.0 / 4.0
 
-        remaining_shipsets = max(0.0, float(tam_shipsets) - float(cum_shipsets))
-        new_installs = min(float(new_installs), float(remaining_shipsets))
+        remaining_capacity = max(0.0, float(fleet_size) - float(installed_base))
+        new_installs = min(float(planned_installs), float(remaining_capacity))
 
-        cum_shipsets_beg = float(cum_shipsets)
-        cum_shipsets_end = float(cum_shipsets_beg) + float(new_installs)
-        avg_shipsets = float(cum_shipsets_beg) + 0.5 * float(new_installs)
-        cum_shipsets = float(cum_shipsets_end)
+        avg_installed = float(installed_base) + 0.5 * float(new_installs)
+        installed_base = float(installed_base) + float(new_installs)
 
-        revenue = float(avg_shipsets) * float(rev_per_shipset) / 1e6
+        revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
 
         cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
         cogs = float(new_installs) * float(cogs_per_kit) / 1e6
@@ -355,7 +382,7 @@ for i in range(len(years) * 4):
     if int(qtr) == 4:
         annual_data[int(yr)] = {
             'New Installs': int(round(float(year_sums['New Installs']), 0)),
-            'Cum Shipsets': int(round(float(cum_shipsets), 0)),
+            'Cum Shipsets': int(round(float(installed_base), 0)),
             'Revenue ($M)': round(float(year_sums['Revenue ($M)']), 1),
             'COGS ($M)': round(float(year_sums['COGS ($M)']), 1),
             'Gross Profit ($M)': round(float(year_sums['Gross Profit ($M)']), 1),
