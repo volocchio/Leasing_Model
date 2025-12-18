@@ -616,4 +616,30 @@ st.header('Assumptions Appendix')
 st.dataframe(assumptions_df, use_container_width=True)
 
 st.header('Enterprise Value')
-st.write(f"Enterprise value ($M): {enterprise_value:.1f}")
+st.markdown(
+    """
+<style>
+div[data-testid="stMetric"] {
+  background: #ECFDF5;
+  border: 3px solid #10B981;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 12px 22px rgba(16, 185, 129, 0.18);
+}
+div[data-testid="stMetric"] label {
+  font-weight: 900 !important;
+  font-size: 1.05rem !important;
+  color: #065F46 !important;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+  font-weight: 900 !important;
+  font-size: 2.4rem !important;
+  color: #064E3B !important;
+}
+</style>
+    """,
+    unsafe_allow_html=True,
+)
+col_ev_l, col_ev, col_ev_r = st.columns([1, 2, 1])
+with col_ev:
+    st.metric(label="Enterprise Value ($M)", value=f"{enterprise_value:,.1f}")
