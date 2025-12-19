@@ -10,7 +10,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d import Axes3D
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,22 @@ def _to_display_value(kind: str, v: float) -> float:
     if kind == "thousands":
         return float(v) / 1000.0
     return float(v)
+
+
+def _round_series_for_spec(s: pd.Series, spec: "DriverSpec") -> pd.Series:
+    if spec.kind in {"int", "thousands"}:
+        return s.astype(float).round(0)
+    if spec.key == "cert_duration_years":
+        return s.astype(float).round(2)
+    return s.astype(float).round(1)
+
+
+def _disp_key(spec: "DriverSpec", v: float) -> float:
+    if spec.kind in {"int", "thousands"}:
+        return float(int(round(float(v))))
+    if spec.key == "cert_duration_years":
+        return float(round(float(v), 2))
+    return float(round(float(v), 1))
 
 
 def run_model(params: Dict[str, Any]) -> Dict[str, float]:
@@ -290,7 +309,7 @@ def build_baseline_params() -> Dict[str, Any]:
     st.sidebar.header("Baseline Inputs")
 
     st.sidebar.header("Fuel")
-    fuel_saving_pct = st.sidebar.slider("Fuel Savings % per Aircraft", min_value=5.0, max_value=15.0, value=10.0, step=0.5) / 100
+    fuel_saving_pct = st.sidebar.slider("Fuel Savings % per Aircraft", min_value=5.0, max_value=15.0, value=9.5, step=0.5) / 100
     block_hours = st.sidebar.slider("Block Hours per Aircraft per Year", min_value=1000, max_value=5000, value=3200, step=100)
     base_fuel_burn_gal_per_hour = st.sidebar.slider("Base Fuel Burn (gal/hour)", min_value=600, max_value=1200, value=750, step=50)
     base_fuel_price = st.sidebar.slider("Base Fuel Price at First Revenue Year ($/gal)", min_value=1.0, max_value=6.0, value=2.75, step=0.1)
@@ -298,7 +317,7 @@ def build_baseline_params() -> Dict[str, Any]:
 
     st.sidebar.header("Market")
     tam_shipsets = st.sidebar.slider("Total Addressable Market (at Project Start)", min_value=1000, max_value=10000, value=7500, step=500)
-    tam_penetration_pct = st.sidebar.slider("TAM Penetration (%)", min_value=0.0, max_value=100.0, value=100.0, step=1.0) / 100
+    tam_penetration_pct = st.sidebar.slider("TAM Penetration (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 
     st.sidebar.header("Commercial")
     fuel_savings_split_to_tamarack = st.sidebar.slider("Fuel Savings Split to Tamarack (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
@@ -308,7 +327,7 @@ def build_baseline_params() -> Dict[str, Any]:
     carbon_price = st.sidebar.slider("Carbon Price ($/tCO2)", min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
     st.sidebar.header("Fleet Dynamics")
-    fleet_retirements_per_month = st.sidebar.slider("Fleet Retirements (Aircraft per Month)", min_value=0, max_value=50, value=0, step=1)
+    fleet_retirements_per_month = st.sidebar.slider("Fleet Retirements (Aircraft per Month)", min_value=0, max_value=50, value=10, step=1)
     include_forward_fit = st.sidebar.checkbox("Include Forward-Fit Aircraft Entering Market", value=False)
     if include_forward_fit:
         forward_fit_per_month = st.sidebar.slider("Forward-Fit Additions (Aircraft per Month)", min_value=0, max_value=50, value=0, step=1)
@@ -558,18 +577,28 @@ def run_sensitivity(
 
 def plot_heatmap(
     pivot: pd.DataFrame,
+    title: str,
     x_label: str,
     y_label: str,
-    title: str,
     x_tick_fmt: str = "%.1f",
     y_tick_fmt: str = "%.1f",
+    fmt: str = "%.0f",
 ) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(8, 5))
 
     z = np.ma.masked_invalid(pivot.values.astype(float))
-    cmap = plt.get_cmap("viridis").copy()
+    cmap = plt.get_cmap("RdYlGn").copy()
     cmap.set_bad(color="#EEEEEE")
-    im = ax.imshow(z, aspect="auto", origin="lower", cmap=cmap, interpolation="nearest")
+    vals = pivot.values.astype(float)
+    if np.isfinite(vals).any():
+        vmin = float(np.nanmin(vals))
+        vmax = float(np.nanmax(vals))
+        if float(vmin) == float(vmax):
+            vmax = float(vmin) + 1.0
+    else:
+        vmin, vmax = 0.0, 1.0
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    im = ax.imshow(z, aspect="auto", origin="lower", cmap=cmap, norm=norm, interpolation="nearest")
 
     ax.set_title(title)
     ax.set_xlabel(x_label)
@@ -581,12 +610,113 @@ def plot_heatmap(
     ax.set_yticks(np.arange(pivot.shape[0]))
     ax.set_yticklabels([y_tick_fmt % float(v) for v in pivot.index.tolist()])
 
+    for i in range(pivot.shape[0]):
+        for j in range(pivot.shape[1]):
+            v = float(pivot.iloc[i, j])
+            if not np.isfinite(v):
+                continue
+            r, g, b, _ = cmap(norm(v))
+            luminance = 0.299 * float(r) + 0.587 * float(g) + 0.114 * float(b)
+            txt_color = "black" if luminance > 0.62 else "white"
+            ax.text(j, i, (fmt % v), ha="center", va="center", fontsize=7, color=txt_color)
+
     cbar = fig.colorbar(im, ax=ax)
     cbar.set_label("Value")
-    cbar.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
+    cbar.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
 
     fig.tight_layout()
     return fig
+
+
+def plot_3d_slices(
+    results: pd.DataFrame,
+    d1: DriverSpec,
+    d2: DriverSpec,
+    d3: DriverSpec,
+    d3_vals: List[float],
+    metric: str,
+    elev: float,
+    azim: float,
+    z_spacing_scale: float = 1.0,
+) -> Figure:
+    d3_disp_vals = [_disp_key(d3, float(v)) for v in d3_vals]
+    seen = set()
+    d3_disp_vals = [v for v in d3_disp_vals if not (v in seen or seen.add(v))]
+
+    def _fmt_d3(v: float) -> str:
+        if d3.kind in {"int", "thousands"}:
+            return f"{int(round(float(v)))}"
+        if d3.key == "cert_duration_years":
+            return f"{float(v):.2f}"
+        return f"{float(v):.1f}"
+
+    n_slices = len(d3_disp_vals)
+    z_spacing = (1.0 + 0.20 * max(0.0, float(n_slices) - 3.0)) * float(z_spacing_scale)
+    z_positions = {float(v3): float(i) * float(z_spacing) for i, v3 in enumerate(d3_disp_vals)}
+    fig_height = 7.0 + 0.25 * max(0, int(n_slices) - 3)
+
+    fig3d = plt.figure(figsize=(12, fig_height))
+    ax3d = fig3d.add_subplot(111, projection=Axes3D.name)
+
+    vmin = float(results["Value"].astype(float).min())
+    vmax = float(results["Value"].astype(float).max())
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    any_surface = False
+    for v3 in d3_disp_vals:
+        slice_df = results[_round_series_for_spec(results[d3.label], d3) == float(v3)]
+        if slice_df.empty:
+            continue
+
+        pivot = slice_df.pivot(index=d2.label, columns=d1.label, values="Value").sort_index().sort_index(axis=1).astype(float)
+        if pivot.shape[0] < 2 or pivot.shape[1] < 2:
+            continue
+
+        xs = pivot.columns.astype(float).to_numpy()
+        ys = pivot.index.astype(float).to_numpy()
+        X, Y = np.meshgrid(xs, ys)
+        V = pivot.to_numpy(dtype=float)
+        Z = np.full_like(V, float(z_positions.get(float(v3), 0.0)), dtype=float)
+
+        facecolors = plt.get_cmap("RdYlGn")(norm(V))
+        ax3d.plot_surface(
+            X,
+            Y,
+            Z,
+            rstride=1,
+            cstride=1,
+            facecolors=facecolors,
+            linewidth=0,
+            antialiased=False,
+            shade=False,
+            alpha=0.90,
+        )
+        any_surface = True
+
+    ax3d.set_title(f"3D Stacked Heatmap Slices (Color = {metric})")
+    ax3d.set_xlabel(d1.label, labelpad=10)
+    ax3d.set_ylabel(d2.label, labelpad=10)
+    ax3d.set_zlabel(d3.label, labelpad=8)
+    ax3d.view_init(elev=float(elev), azim=float(azim))
+    ax3d.tick_params(axis="both", which="major", labelsize=9, pad=1)
+
+    if n_slices > 0:
+        tick_pos = [z_positions[float(v3)] for v3 in d3_disp_vals]
+        ax3d.set_zticks(tick_pos)
+        ax3d.set_zticklabels([_fmt_d3(float(v3)) for v3 in d3_disp_vals])
+        ax3d.set_zlim(-0.5 * float(z_spacing), float(tick_pos[-1]) + 0.5 * float(z_spacing))
+
+    if hasattr(ax3d, "set_box_aspect"):
+        ax3d.set_box_aspect((1.0, 1.0, max(1.0, float(n_slices) * 0.55 * float(z_spacing_scale))))
+
+    if any_surface:
+        sm = ScalarMappable(norm=norm, cmap="RdYlGn")
+        sm.set_array([])
+        cbar = fig3d.colorbar(sm, ax=ax3d, pad=0.12, shrink=0.75)
+        cbar.set_label(metric)
+
+    fig3d.subplots_adjust(bottom=0.16, left=0.10, right=0.92, top=0.92)
+    return fig3d
 
 
 def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_title: bool = True) -> None:
@@ -646,7 +776,7 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
             "Driver 1",
             options=d1_options,
             format_func=lambda k: driver_labels[k],
-            index=_key_index(d1_options, "wacc", 0),
+            index=_key_index(d1_options, "fuel_savings_split_to_tamarack", 0),
             label_visibility="collapsed",
         )
     with col_b:
@@ -669,7 +799,7 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
             unsafe_allow_html=True,
         )
         d3_options = [d.key for d in drivers if d.key not in {d1_key, d2_key}]
-        d3_default = "cert_duration_years" if "cert_duration_years" in d3_options else (d3_options[0] if len(d3_options) > 0 else d1_key)
+        d3_default = "fuel_saving_pct" if "fuel_saving_pct" in d3_options else (d3_options[0] if len(d3_options) > 0 else d1_key)
         d3_key = st.selectbox(
             "Driver 3",
             options=d3_options,
@@ -773,13 +903,64 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
         st.error("Too many scenarios. Reduce points (target <= 5,000).")
         return
 
-    run = st.button("Run Sensitivity Study")
-    if not run:
-        return
+    sig = (
+        str(d1.key),
+        str(d2.key),
+        str(d3.key),
+        str(metric),
+        float(d1_low),
+        float(d1_high),
+        int(d1_points),
+        float(d2_low),
+        float(d2_high),
+        int(d2_points),
+        float(d3_low),
+        float(d3_high),
+        int(d3_points),
+    )
 
-    results = run_sensitivity(baseline_params, d1, d2, d3, d1_vals, d2_vals, d3_vals, metric)
-    st.subheader("Scenario Results (Long Form)")
-    st.dataframe(results, use_container_width=True)
+    if "sensitivity_results" not in st.session_state:
+        st.session_state.sensitivity_results = None
+        st.session_state.sensitivity_sig = None
+
+    if st.session_state.sensitivity_sig is not None and st.session_state.sensitivity_sig != sig:
+        st.session_state.sensitivity_results = None
+        st.session_state.sensitivity_sig = None
+
+    run = st.button("Run Sensitivity Study")
+    if run:
+        st.session_state.sensitivity_results = run_sensitivity(baseline_params, d1, d2, d3, d1_vals, d2_vals, d3_vals, metric)
+        st.session_state.sensitivity_sig = sig
+
+    results = st.session_state.sensitivity_results
+    if results is None:
+        st.info("Click 'Run Sensitivity Study' to generate results.")
+        return
+    with st.expander("Scenario Results (Long Form)", expanded=False):
+        st.dataframe(results, use_container_width=True)
+
+    with st.expander("3D View", expanded=True):
+        rot_a, rot_b, rot_c = st.columns(3)
+        with rot_a:
+            elev = st.number_input("Elevation", min_value=-90, max_value=90, value=16, step=1)
+        with rot_b:
+            azim = st.number_input("Azimuth", min_value=-180, max_value=180, value=-60, step=1)
+        with rot_c:
+            z_spacing_scale = st.number_input("Slice Stacking Distance", min_value=0.5, max_value=5.0, value=1.0, step=0.1)
+
+        fig3d = plot_3d_slices(
+            results,
+            d1,
+            d2,
+            d3,
+            d3_vals,
+            metric,
+            float(elev),
+            float(azim),
+            float(z_spacing_scale),
+        )
+        st.pyplot(fig3d)
+        plt.close(fig3d)
 
     st.subheader("Heatmap Slices")
     st.markdown(
@@ -842,7 +1023,7 @@ div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
         with tab:
             st.markdown(f"**Slice:** {d3.label} = {_fmt_value(d3, float(v3))}")
             slice_df = results[_round_series_for_spec(results[d3.label], d3) == float(v3)]
-            pivot = slice_df.pivot(index=d2.label, columns=d1.label, values="Value").sort_index().sort_index(axis=1).astype(float).round(1)
+            pivot = slice_df.pivot(index=d2.label, columns=d1.label, values="Value").sort_index().sort_index(axis=1).astype(float).round(0)
             st.dataframe(pivot, use_container_width=True)
             fig = plot_heatmap(
                 pivot,
@@ -881,9 +1062,55 @@ div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
         pdf.savefig(title_fig, bbox_inches="tight")
         plt.close(title_fig)
 
+        fig3d_pdf = plot_3d_slices(
+            results,
+            d1,
+            d2,
+            d3,
+            d3_vals,
+            metric,
+            float(elev),
+            float(azim),
+            float(z_spacing_scale),
+        )
+        pdf.savefig(fig3d_pdf, bbox_inches="tight")
+        plt.close(fig3d_pdf)
+
         for fig in pdf_figs:
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
+
+        assumptions_df = pd.DataFrame({
+            "Assumption": list(baseline_params.keys()),
+            "Value": [
+                (
+                    f"{_to_display_value(driver_by_key[k].kind, float(baseline_params[k])):.2f}%" if (k in driver_by_key and driver_by_key[k].kind == "percent")
+                    else (
+                        f"{_to_display_value(driver_by_key[k].kind, float(baseline_params[k])):.2f}" if (k in driver_by_key and isinstance(baseline_params[k], (int, float)))
+                        else str(baseline_params[k])
+                    )
+                )
+                for k in baseline_params.keys()
+            ],
+        })
+
+        assumptions_df["Assumption"] = assumptions_df["Assumption"].map(lambda k: driver_labels.get(k, k))
+
+        fig_assumptions = plt.figure(figsize=(8.5, 11))
+        ax_assumptions = fig_assumptions.add_subplot(111)
+        ax_assumptions.axis("off")
+        tbl = ax_assumptions.table(
+            cellText=assumptions_df.values,
+            colLabels=assumptions_df.columns,
+            loc="center",
+            cellLoc="left",
+        )
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(7)
+        tbl.scale(1.0, 1.2)
+        fig_assumptions.suptitle("Baseline Assumptions", fontsize=16, fontweight="bold")
+        pdf.savefig(fig_assumptions, bbox_inches="tight")
+        plt.close(fig_assumptions)
 
     st.markdown(
         """

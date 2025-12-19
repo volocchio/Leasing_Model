@@ -510,44 +510,45 @@ st.write(f"PV of explicit period FCF ($M): {pv_explicit:.1f}")
 st.write(f"PV of terminal value ($M): {0.0 if np.isnan(pv_tv) else pv_tv:.1f}")
 st.dataframe(dcf_summary_df, use_container_width=True)
 
-# Nice Plots
-st.header('Financial Projections Plots')
+st.header('Financial Projection Plots (Annual / Non-Cumulative)')
 
-fig, ax = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
-fig.suptitle('Tamarack A320 Financial Projections', fontsize=16)
+years = df.index
+x = np.arange(len(years))
+width = 0.25
 
-# Revenue
-ax[0].bar(df.index, df['Revenue ($M)'], color='orange', label='Revenue')
-ax[0].set_title('Revenue Over Time')
-ax[0].set_ylabel('$M')
-ax[0].legend()
-ax[0].grid(True, linestyle='--', alpha=0.7)
+fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+ax.bar(x - width, df['Revenue ($M)'], width=width, color='orange', label='Revenue')
+ax.bar(x, df['Gross Profit ($M)'], width=width, color='green', label='Gross Profit')
+ax.bar(x + width, df['Free Cash Flow ($M)'], width=width, color='blue', label='Free Cash Flow')
+ax.set_title('Annual Revenue, Gross Profit, and Free Cash Flow')
+ax.set_ylabel('$M')
+ax.set_xlabel('Year')
+ax.set_xticks(x)
+ax.set_xticklabels(years)
+ax.legend(ncol=3)
+ax.grid(True, linestyle='--', alpha=0.7)
 
-# Gross Profit
-ax[1].bar(df.index, df['Gross Profit ($M)'], color='green', label='Gross Profit')
-ax[1].set_title('Gross Profit Over Time')
-ax[1].set_ylabel('$M')
-ax[1].legend()
-ax[1].grid(True, linestyle='--', alpha=0.7)
-
-# Free Cash Flow
-ax[2].bar(df.index, df['Free Cash Flow ($M)'], color='blue', label='Free Cash Flow')
-ax[2].set_title('Free Cash Flow Over Time')
-ax[2].set_ylabel('$M')
-ax[2].set_xlabel('Year')
-ax[2].legend()
-ax[2].grid(True, linestyle='--', alpha=0.7)
-
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.tight_layout()
 st.pyplot(fig)
 
-# PDF Report Download
+cumulative_cash = df['Free Cash Flow ($M)'].cumsum()
+fig_cum, ax_cum = plt.subplots(1, 1, figsize=(12, 4))
+ax_cum.plot(years, cumulative_cash, color='purple', marker='o', linewidth=2, label='Cumulative Free Cash Flow')
+ax_cum.axhline(0, color='black', linewidth=1, alpha=0.4)
+ax_cum.set_title('Cumulative Cash (Cumulative Free Cash Flow)')
+ax_cum.set_ylabel('$M')
+ax_cum.set_xlabel('Year')
+ax_cum.legend()
+ax_cum.grid(True, linestyle='--', alpha=0.7)
+
+plt.tight_layout()
+st.pyplot(fig_cum)
+
 st.header('Generate PDF Report')
 
 if st.button('Download PDF Report'):
     pdf_buffer = BytesIO()
     with PdfPages(pdf_buffer) as pdf:
-        # Page 1: Table
         fig_table = plt.figure(figsize=(17, 11))
         ax_table = fig_table.add_subplot(111)
         ax_table.axis('off')
@@ -569,8 +570,8 @@ if st.button('Download PDF Report'):
         fig_table.suptitle('Financial Projections Table')
         pdf.savefig(fig_table, bbox_inches='tight')
         
-        # Page 2: Plots
         pdf.savefig(fig, bbox_inches='tight')
+        pdf.savefig(fig_cum, bbox_inches='tight')
 
         fig_pl = plt.figure(figsize=(17, 11))
         ax_pl = fig_pl.add_subplot(111)
