@@ -11,9 +11,9 @@ import pandas as pd
 import streamlit as st
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d import Axes3D, proj3d
 
 
 @dataclass(frozen=True)
@@ -587,7 +587,11 @@ def plot_heatmap(
     fig, ax = plt.subplots(figsize=(8, 5))
 
     z = np.ma.masked_invalid(pivot.values.astype(float))
-    cmap = plt.get_cmap("RdYlGn").copy()
+    base_cmap = plt.get_cmap("Greens")
+    cmap = LinearSegmentedColormap.from_list(
+        "light_to_dark_green",
+        base_cmap(np.linspace(0.25, 0.95, 256)),
+    )
     cmap.set_bad(color="#EEEEEE")
     vals = pivot.values.astype(float)
     if np.isfinite(vals).any():
@@ -643,6 +647,12 @@ def plot_3d_slices(
     seen = set()
     d3_disp_vals = [v for v in d3_disp_vals if not (v in seen or seen.add(v))]
 
+    base_cmap = plt.get_cmap("Greens")
+    cmap = LinearSegmentedColormap.from_list(
+        "light_to_dark_green",
+        base_cmap(np.linspace(0.25, 0.95, 256)),
+    )
+
     def _fmt_d3(v: float) -> str:
         if d3.kind in {"int", "thousands"}:
             return f"{int(round(float(v)))}"
@@ -655,7 +665,7 @@ def plot_3d_slices(
     z_positions = {float(v3): float(i) * float(z_spacing) for i, v3 in enumerate(d3_disp_vals)}
     fig_height = 7.0 + 0.25 * max(0, int(n_slices) - 3)
 
-    fig3d = plt.figure(figsize=(12, fig_height))
+    fig3d = plt.figure(figsize=(14, fig_height))
     ax3d = fig3d.add_subplot(111, projection=Axes3D.name)
 
     vmin = float(results["Value"].astype(float).min())
@@ -678,7 +688,7 @@ def plot_3d_slices(
         V = pivot.to_numpy(dtype=float)
         Z = np.full_like(V, float(z_positions.get(float(v3), 0.0)), dtype=float)
 
-        facecolors = plt.get_cmap("RdYlGn")(norm(V))
+        facecolors = cmap(norm(V))
         ax3d.plot_surface(
             X,
             Y,
@@ -694,9 +704,9 @@ def plot_3d_slices(
         any_surface = True
 
     ax3d.set_title(f"3D Stacked Heatmap Slices (Color = {metric})")
-    ax3d.set_xlabel(d1.label, labelpad=10)
-    ax3d.set_ylabel(d2.label, labelpad=10)
-    ax3d.set_zlabel(d3.label, labelpad=8)
+    ax3d.set_xlabel("")
+    ax3d.set_ylabel("")
+    ax3d.set_zlabel("")
     ax3d.view_init(elev=float(elev), azim=float(azim))
     ax3d.tick_params(axis="both", which="major", labelsize=9, pad=1)
 
@@ -709,13 +719,135 @@ def plot_3d_slices(
     if hasattr(ax3d, "set_box_aspect"):
         ax3d.set_box_aspect((1.0, 1.0, max(1.0, float(n_slices) * 0.55 * float(z_spacing_scale))))
 
+    fig3d.subplots_adjust(bottom=0.12, left=0.08, right=0.80, top=0.92)
     if any_surface:
-        sm = ScalarMappable(norm=norm, cmap="RdYlGn")
+        sm = ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
-        cbar = fig3d.colorbar(sm, ax=ax3d, pad=0.12, shrink=0.75)
+        cax = fig3d.add_axes([0.86, 0.22, 0.03, 0.60])
+        cbar = fig3d.colorbar(sm, cax=cax)
         cbar.set_label(metric)
 
-    fig3d.subplots_adjust(bottom=0.16, left=0.10, right=0.92, top=0.92)
+    fig3d.canvas.draw()
+
+    xlim = ax3d.get_xlim3d()
+    ylim = ax3d.get_ylim3d()
+    zlim = ax3d.get_zlim3d()
+    x0, x1 = float(xlim[0]), float(xlim[1])
+    y0, y1 = float(ylim[0]), float(ylim[1])
+    z0, z1 = float(zlim[0]), float(zlim[1])
+
+    def _fig_xy(x: float, y: float, z: float) -> Tuple[float, float]:
+        x2, y2, _ = proj3d.proj_transform(float(x), float(y), float(z), ax3d.get_proj())
+        xd, yd = ax3d.transData.transform((x2, y2))
+        xf, yf = fig3d.transFigure.inverted().transform((xd, yd))
+        return float(xf), float(yf)
+
+    def _mid(p: Tuple[float, float], q: Tuple[float, float]) -> Tuple[float, float]:
+        return ((p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0)
+
+    def _lerp(p: Tuple[float, float], q: Tuple[float, float], t: float) -> Tuple[float, float]:
+        tt = float(t)
+        return (p[0] + (q[0] - p[0]) * tt, p[1] + (q[1] - p[1]) * tt)
+
+    def _angle(p: Tuple[float, float], q: Tuple[float, float]) -> float:
+        return float(np.degrees(np.arctan2(q[1] - p[1], q[0] - p[0])))
+
+    def _offset_away_from_center(
+        p: Tuple[float, float],
+        q: Tuple[float, float],
+        center: Tuple[float, float],
+        amount: float,
+    ) -> Tuple[float, float]:
+        dx = float(q[0] - p[0])
+        dy = float(q[1] - p[1])
+        n = float(np.hypot(dx, dy))
+        if n == 0.0:
+            return 0.0, 0.0
+        ux = dx / n
+        uy = dy / n
+        px = -uy
+        py = ux
+        mx, my = _mid(p, q)
+        vx = float(mx - center[0])
+        vy = float(my - center[1])
+        if px * vx + py * vy < 0.0:
+            px = -px
+            py = -py
+        return float(amount * px), float(amount * py)
+
+    p_x0 = _fig_xy(x0, y0, z0)
+    p_x1 = _fig_xy(x1, y0, z0)
+    p_y0 = _fig_xy(x1, y0, z0)
+    p_y1 = _fig_xy(x1, y1, z0)
+    p_z0 = _fig_xy(x1, y1, z0)
+    p_z1 = _fig_xy(x1, y1, z1)
+
+    center = _fig_xy((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0)
+
+    x_pos = _lerp(p_x0, p_x1, 0.50)
+    y_pos = _lerp(p_y0, p_y1, 0.56)
+    z_pos = _lerp(p_z0, p_z1, 0.55)
+
+    x_rot = _angle(p_x0, p_x1)
+    y_rot = _angle(p_y0, p_y1)
+    z_rot = _angle(p_z0, p_z1)
+
+    def _median_tick_rotation(labels: List[plt.Text], fallback: float) -> float:
+        rots: List[float] = []
+        for t in labels:
+            if t is None:
+                continue
+            if not str(t.get_text() or "").strip():
+                continue
+            try:
+                rots.append(float(t.get_rotation()))
+            except Exception:
+                continue
+        if not rots:
+            return float(fallback)
+        return float(np.median(np.array(rots, dtype=float)))
+
+    x_rot = _median_tick_rotation(list(ax3d.get_xticklabels()), x_rot)
+    y_rot = _median_tick_rotation(list(ax3d.get_yticklabels()), y_rot)
+
+    def _clamp01(v: float) -> float:
+        return float(np.clip(v, 0.02, 0.98))
+
+    x_off = _offset_away_from_center(p_x0, p_x1, center, amount=0.028)
+    y_off = _offset_away_from_center(p_y0, p_y1, center, amount=0.060)
+    z_off = _offset_away_from_center(p_z0, p_z1, center, amount=0.020)
+
+    x_nudge = (0.0, -0.060)
+    y_nudge = (0.0, -0.040)
+    z_nudge = (0.0, 0.0)
+
+    fig3d.text(
+        _clamp01(x_pos[0] + x_off[0] + x_nudge[0]),
+        _clamp01(x_pos[1] + x_off[1] + x_nudge[1]),
+        d1.label,
+        ha="center",
+        va="center",
+        rotation=x_rot,
+        rotation_mode="anchor",
+    )
+    fig3d.text(
+        _clamp01(y_pos[0] + y_off[0] + y_nudge[0]),
+        _clamp01(y_pos[1] + y_off[1] + y_nudge[1]),
+        d2.label,
+        ha="center",
+        va="center",
+        rotation=y_rot,
+        rotation_mode="anchor",
+    )
+    fig3d.text(
+        _clamp01(z_pos[0] + z_off[0] + z_nudge[0]),
+        _clamp01(z_pos[1] + z_off[1] + z_nudge[1]),
+        d3.label,
+        ha="center",
+        va="center",
+        rotation=z_rot,
+        rotation_mode="anchor",
+    )
     return fig3d
 
 
@@ -1073,7 +1205,7 @@ div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
             float(azim),
             float(z_spacing_scale),
         )
-        pdf.savefig(fig3d_pdf, bbox_inches="tight")
+        pdf.savefig(fig3d_pdf, bbox_inches="tight", pad_inches=0.25)
         plt.close(fig3d_pdf)
 
         for fig in pdf_figs:
