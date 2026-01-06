@@ -968,7 +968,11 @@ def render_sensitivity_app(
         kit_price_df["Kit Price ($/kit)"] = kit_price_df["Kit Price ($/kit)"].astype(float).round(0)
 
         st.subheader("Kit Price by Year")
-        st.dataframe(kit_price_df, hide_index=True, use_container_width=False)
+        st.dataframe(
+            kit_price_df.style.format({"Kit Price ($/kit)": "{:,.0f}"}, na_rep=""),
+            hide_index=True,
+            use_container_width=False,
+        )
 
     st.header("Sensitivity Study")
 

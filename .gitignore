@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 venv/
 .env
+Tamarack_Financial_Report.pdf
+sensitivity_study*.pdf
