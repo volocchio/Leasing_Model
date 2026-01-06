@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from io import BytesIO
 from pathlib import Path
+from typing import Dict
 
 from app_sense import render_sensitivity_app
 
@@ -22,7 +23,7 @@ with col_img_2:
     if _img_logo.exists():
         st.image(str(_img_logo), width=500)
 
-st.title('Tamarack Aerospace A320 Financial Model - Leasing, Split Savings')
+st.title('Tamarack Aerospace A320 Financial Model')
 
 st.markdown(
     """
@@ -39,13 +40,14 @@ div[data-testid="stRadio"] label p {
   font-size: 1.05rem !important;
 }
 div[data-testid="stRadio"] div[role="radiogroup"] {
-  gap: 16px;
+  gap: 10px;
+  flex-wrap: nowrap;
 }
 div[data-testid="stRadio"] div[role="radiogroup"] > label {
   background: #FFFFFF;
   border: 1px solid #BFDBFE;
   border-radius: 10px;
-  padding: 8px 12px;
+  padding: 8px 10px;
 }
 div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {
   border-color: #1D4ED8;
@@ -59,6 +61,9 @@ div[data-testid="stMetric"] {
   border-radius: 16px;
   padding: 16px 18px;
   box-shadow: 0 12px 22px rgba(16, 185, 129, 0.18);
+}
+div[data-testid="stMetric"] label p {
+  font-weight: 900 !important;
 }
 div[data-testid="stMetric"] label {
   font-weight: 900 !important;
@@ -75,15 +80,37 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
     unsafe_allow_html=True,
 )
 
-col_mode, col_ev = st.columns([3, 2])
-with col_mode:
-    mode = st.radio('Mode', options=['Standalone Model', 'Sensitivity Study (3 Drivers, 1 Output)'], horizontal=True)
-with col_ev:
-    ev_placeholder = st.empty()
-    ev_placeholder.metric(label="Enterprise Value ($M)", value="—")
+col_main, col_right = st.columns([0.6, 3.4])
+with col_right:
+    def _biz_label(v: str) -> str:
+        return 'Leasing' if str(v).startswith('Leasing') else 'Kit Sale'
+
+    def _mode_label(v: str) -> str:
+        return 'Standalone' if str(v).startswith('Standalone') else 'Sensitivity'
+
+    col_biz, col_mode, col_ev = st.columns([1.1, 1.6, 1.3], gap="small")
+    with col_biz:
+        model_type = st.radio(
+            'Business Model',
+            options=['Leasing (Split Savings)', 'Kit Sale (Payback Pricing)'],
+            horizontal=True,
+            format_func=_biz_label,
+        )
+    with col_mode:
+        mode = st.radio(
+            'Mode',
+            options=['Standalone Model', 'Sensitivity Study (3 Drivers, 1 Output)'],
+            horizontal=True,
+            format_func=_mode_label,
+        )
+    with col_ev:
+        ev_placeholder = st.empty()
+        ev_placeholder.metric(label="Enterprise Value ($M)", value="—")
+with col_main:
+    pass
 
 if mode == 'Sensitivity Study (3 Drivers, 1 Output)':
-    render_sensitivity_app(baseline_params=None, show_title=False)
+    render_sensitivity_app(baseline_params=None, show_title=False, model_type_override=str(model_type))
     st.stop()
 
 # Simplified Sidebar with key sliders
@@ -99,11 +126,20 @@ tam_shipsets = st.sidebar.slider('Total Addressable Market (at Project Start)', 
 tam_penetration_pct = st.sidebar.slider('TAM Penetration (%)', min_value=0.0, max_value=100.0, value=100.0, step=1.0) / 100
 
 st.sidebar.header('Commercial')
-fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+if model_type == 'Kit Sale (Payback Pricing)':
+    target_payback_years = st.sidebar.slider('Target Airline Payback (Years)', min_value=1.0, max_value=5.0, value=2.5, step=0.25)
+    fuel_savings_split_to_tamarack = 0.50
+else:
+    target_payback_years = 2.5
+    fuel_savings_split_to_tamarack = st.sidebar.slider('Fuel Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 
-st.sidebar.header('CORSIA')
-corsia_split = st.sidebar.slider('CORSIA Exposure (Share to Tamarack) (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
-carbon_price = st.sidebar.slider('Carbon Price ($/tCO2)', min_value=0.0, max_value=200.0, value=30.0, step=5.0)
+if model_type == 'Kit Sale (Payback Pricing)':
+    corsia_split = 0.0
+    carbon_price = 0.0
+else:
+    st.sidebar.header('CORSIA')
+    corsia_split = st.sidebar.slider('CORSIA Exposure (Share to Tamarack) (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+    carbon_price = st.sidebar.slider('Carbon Price ($/tCO2)', min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
 st.sidebar.header('Fleet Dynamics')
 fleet_retirements_per_month = st.sidebar.slider('Fleet Retirements (Aircraft per Month)', min_value=0, max_value=50, value=0, step=1)
@@ -159,6 +195,11 @@ opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 20
 # Years
 years = list(range(2026, 2036))  # 10 years
 
+corsia_assumption_rows = [] if model_type == 'Kit Sale (Payback Pricing)' else [
+    {'Assumption': 'CORSIA Exposure (Share of Ops)', 'Value': f"{corsia_split * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Share of operations subject to CORSIA compliance pricing (applied starting in first revenue quarter)'},
+    {'Assumption': 'Carbon Price', 'Value': f"{carbon_price:.2f}", 'Units': '$/tCO2', 'Type': 'Slider', 'Notes': 'Used to value avoided CORSIA compliance cost (fuel savings + avoided CORSIA = total value created)'},
+]
+
 assumptions_rows = [
     {'Assumption': 'Annual Fuel Inflation', 'Value': f"{fuel_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base fuel price starting in the first revenue year'},
     {'Assumption': 'Base Fuel Price (First Revenue Year)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Slider', 'Notes': f"Base fuel price used in {revenue_start_year}"},
@@ -167,9 +208,8 @@ assumptions_rows = [
     {'Assumption': 'Annual COGS Inflation', 'Value': f"{cogs_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base COGS per kit starting in the first revenue year'},
     {'Assumption': 'Base COGS per Kit (First Revenue Year)', 'Value': f"{base_cogs:,.0f}", 'Units': '$/kit', 'Type': 'Slider', 'Notes': f"Input slider is in $000; base COGS per kit used in {revenue_start_year}; also used for inventory build"},
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
-    {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'},
-    {'Assumption': 'CORSIA Exposure (Share of Ops)', 'Value': f"{corsia_split * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Share of operations subject to CORSIA compliance pricing (applied starting in first revenue quarter)'},
-    {'Assumption': 'Carbon Price', 'Value': f"{carbon_price:.2f}", 'Units': '$/tCO2', 'Type': 'Slider', 'Notes': 'Used to value avoided CORSIA compliance cost (fuel savings + avoided CORSIA = total value created)'},
+    ({'Assumption': 'Target Airline Payback', 'Value': f"{float(target_payback_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': 'Kit price is set so the airline recovers cost via fuel savings over the target payback period'} if model_type == 'Kit Sale (Payback Pricing)' else {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'}),
+    *corsia_assumption_rows,
     {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; go-live is {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Used first to fund certification / inventory outflows prior to {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Max Debt Available', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Debt facility cap; model draws only what is needed prior to {revenue_start_year}Q{revenue_start_quarter}"},
@@ -229,6 +269,8 @@ for i in range(len(years) * 4):
     if year_sums is None:
         year_sums = {
             'New Installs': 0.0,
+            'Kit Price ($/kit) Sum': 0.0,
+            'Kit Price Qtrs': 0.0,
             'Revenue ($M)': 0.0,
             'COGS ($M)': 0.0,
             'Gross Profit ($M)': 0.0,
@@ -269,6 +311,7 @@ for i in range(len(years) * 4):
         new_installs = 0.0
         revenue = 0.0
         cogs = 0.0
+        kit_price = np.nan
 
         if i < int(cert_duration_quarters):
             capex = float(cert_spend_per_quarter)
@@ -279,14 +322,14 @@ for i in range(len(years) * 4):
         fuel_price = float(base_fuel_price) * float((1 + float(fuel_inflation)) ** int(year_idx))
         quarter_block_hours = float(block_hours) / 4.0
         quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
+
         quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
         quarter_gallons_burn = quarter_block_hours * float(base_fuel_burn_gal_per_hour)
         gallons_saved = quarter_gallons_burn * float(fuel_saving_pct)
         fuel_saved_tonnes = gallons_saved * 0.00304
         co2_avoided_t = fuel_saved_tonnes * 3.16
-        corsia_value = co2_avoided_t * float(corsia_split) * float(carbon_price)
+        corsia_value = 0.0 if model_type == 'Kit Sale (Payback Pricing)' else (co2_avoided_t * float(corsia_split) * float(carbon_price))
         total_value_created = quarter_saving + corsia_value
-        rev_per_shipset = total_value_created * float(split_pct)
 
         rev_q_idx = int(i - int(revenue_start_q_index))
         planned_installs = 0.0
@@ -308,10 +351,19 @@ for i in range(len(years) * 4):
         remaining_capacity = max(0.0, float(installable_cap) - float(installed_base))
         new_installs = min(float(planned_installs), float(remaining_capacity))
 
-        avg_installed = float(installed_base) + 0.5 * float(new_installs)
         installed_base = float(installed_base) + float(new_installs)
 
-        revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
+        kit_price = np.nan
+
+        if model_type == 'Kit Sale (Payback Pricing)':
+            annual_value_created = float(total_value_created) * 4.0
+            rev_per_kit = float(annual_value_created) * float(target_payback_years)
+            kit_price = float(rev_per_kit)
+            revenue = float(new_installs) * float(rev_per_kit) / 1e6
+        else:
+            rev_per_shipset = total_value_created * float(split_pct)
+            avg_installed = float(installed_base) - 0.5 * float(new_installs)
+            revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
 
         cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
         cogs = float(new_installs) * float(cogs_per_kit) / 1e6
@@ -375,6 +427,9 @@ for i in range(len(years) * 4):
     equity_roi = (float(equity_cum_cf) / float(equity_amount)) if float(equity_amount) > 0 else 0.0
 
     year_sums['New Installs'] += float(new_installs)
+    if not np.isnan(kit_price):
+        year_sums['Kit Price ($/kit) Sum'] += float(kit_price)
+        year_sums['Kit Price Qtrs'] += 1.0
     year_sums['Revenue ($M)'] += float(revenue)
     year_sums['COGS ($M)'] += float(cogs)
     year_sums['Gross Profit ($M)'] += float(gross_profit)
@@ -395,9 +450,11 @@ for i in range(len(years) * 4):
     year_sums['Equity CF ($M)'] += float(equity_cf)
 
     if int(qtr) == 4:
+        avg_kit_price = (float(year_sums['Kit Price ($/kit) Sum']) / float(year_sums['Kit Price Qtrs'])) if float(year_sums['Kit Price Qtrs']) > 0 else np.nan
         annual_data[int(yr)] = {
             'New Installs': int(round(float(year_sums['New Installs']), 0)),
             'Cum Shipsets': int(round(float(installed_base), 0)),
+            'Kit Price ($/kit)': round(float(avg_kit_price), 0) if not np.isnan(avg_kit_price) else np.nan,
             'Revenue ($M)': round(float(year_sums['Revenue ($M)']), 1),
             'COGS ($M)': round(float(year_sums['COGS ($M)']), 1),
             'Gross Profit ($M)': round(float(year_sums['Gross Profit ($M)']), 1),
@@ -489,7 +546,32 @@ dcf_summary_df = pd.DataFrame({
     'Enterprise Value ($M)': [round(enterprise_value, 1)],
 })
 
-st.dataframe(df, use_container_width=True)
+df_display = df.copy()
+if model_type != 'Kit Sale (Payback Pricing)' and 'Kit Price ($/kit)' in df_display.columns:
+    df_display = df_display.drop(columns=['Kit Price ($/kit)'])
+elif model_type == 'Kit Sale (Payback Pricing)' and 'Kit Price ($/kit)' in df_display.columns:
+    df_display['Kit Price ($/kit)'] = df_display['Kit Price ($/kit)'].apply(
+        lambda v: (round(float(v) / 100000.0) * 100000.0) if pd.notna(v) else np.nan
+    )
+
+df_display_view = df_display
+if model_type == 'Kit Sale (Payback Pricing)' and 'Kit Price ($/kit)' in df_display.columns:
+    _fmt: Dict[str, str] = {}
+    for _col in list(df_display.columns):
+        if _col == 'Kit Price ($/kit)':
+            _fmt[_col] = '{:,.0f}'
+        elif '($M)' in _col:
+            _fmt[_col] = '{:,.1f}'
+        elif '(%)' in _col:
+            _fmt[_col] = '{:,.1f}'
+        elif _col in ['New Installs', 'Cum Shipsets']:
+            _fmt[_col] = '{:,.0f}'
+
+    _align_cols = list(_fmt.keys())
+    df_display_view = df_display.style.format(_fmt, na_rep='')
+    df_display_view = df_display_view.set_properties(subset=_align_cols, **{'text-align': 'right'})
+
+st.dataframe(df_display_view, use_container_width=True)
 
 st.header('Three-Statement Output')
 st.subheader('P&L')
@@ -552,10 +634,18 @@ if st.button('Download PDF Report'):
         fig_table = plt.figure(figsize=(17, 11))
         ax_table = fig_table.add_subplot(111)
         ax_table.axis('off')
-        table = ax_table.table(cellText=df.values, colLabels=df.columns, rowLabels=df.index, loc='center', cellLoc='center')
+        df_pdf = df_display.copy()
+        kit_price_col = None
+        if 'Kit Price ($/kit)' in df_pdf.columns:
+            kit_price_col = list(df_pdf.columns).index('Kit Price ($/kit)')
+            df_pdf['Kit Price ($/kit)'] = df_pdf['Kit Price ($/kit)'].apply(
+                lambda v: f"{(round(float(v) / 100000.0) * 100000.0):,.0f}" if pd.notna(v) else ""
+            )
+
+        table = ax_table.table(cellText=df_pdf.values, colLabels=df_pdf.columns, rowLabels=df_pdf.index, loc='center', cellLoc='center')
         table.auto_set_font_size(False)
         table.set_fontsize(6)
-        table.auto_set_column_width(col=list(range(len(df.columns))))
+        table.auto_set_column_width(col=list(range(len(df_pdf.columns))))
         table.scale(1.0, 1.4)
         for (row, col), cell in table.get_celld().items():
             if row == 0:
@@ -567,9 +657,11 @@ if st.button('Download PDF Report'):
                 cell._text.set_va('bottom')
                 cell._text.set_position((cell.get_x() + 0.01, cell.get_y() + 0.02))
                 cell.set_height(cell.get_height() * 1.6)
+            if kit_price_col is not None and int(row) > 0 and int(col) == int(kit_price_col):
+                cell.get_text().set_ha('right')
         fig_table.suptitle('Financial Projections Table')
         pdf.savefig(fig_table, bbox_inches='tight')
-        
+
         pdf.savefig(fig, bbox_inches='tight')
         pdf.savefig(fig_cum, bbox_inches='tight')
 
@@ -641,7 +733,7 @@ if st.button('Download PDF Report'):
         ax_ev.text(0.02, 0.55, f"WACC: {wacc * 100:.2f}%", fontsize=12)
         ax_ev.text(0.02, 0.49, f"Terminal Growth Rate: {terminal_growth * 100:.2f}%", fontsize=12)
         pdf.savefig(fig_ev, bbox_inches='tight')
-    
+
     pdf_buffer.seek(0)
     st.markdown(
         """

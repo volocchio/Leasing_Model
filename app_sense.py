@@ -59,6 +59,8 @@ def _disp_key(spec: "DriverSpec", v: float) -> float:
 def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     years = list(range(2026, 2036))
 
+    model_type = str(params.get("model_type", "Leasing (Split Savings)"))
+
     revenue_start_q_index = int(params["revenue_start_q_index"])
     inventory_purchase_q_index = int(params["inventory_purchase_q_index"])
     revenue_start_year = int(params["revenue_start_year"])
@@ -75,8 +77,14 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     fuel_saving_pct = float(params["fuel_saving_pct"])
     split_pct = float(params["fuel_savings_split_to_tamarack"])
 
+    target_payback_years = float(params.get("target_payback_years", 2.5))
+
     corsia_split = float(params.get("corsia_split", 0.0))
     carbon_price = float(params.get("carbon_price", 0.0))
+
+    if model_type == "Kit Sale (Payback Pricing)":
+        corsia_split = 0.0
+        carbon_price = 0.0
 
     inventory_kits_pre_install = int(params["inventory_kits_pre_install"])
     tam_shipsets = int(params["tam_shipsets"])
@@ -173,9 +181,8 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
             gallons_saved = quarter_gallons_burn * float(fuel_saving_pct)
             fuel_saved_tonnes = gallons_saved * 0.00304
             co2_avoided_t = fuel_saved_tonnes * 3.16
-            corsia_value = co2_avoided_t * float(corsia_split) * float(carbon_price)
+            corsia_value = 0.0 if model_type == "Kit Sale (Payback Pricing)" else (co2_avoided_t * float(corsia_split) * float(carbon_price))
             total_value_created = quarter_saving + corsia_value
-            rev_per_shipset = total_value_created * float(split_pct)
 
             rev_q_idx = int(i - int(revenue_start_q_index))
             planned_installs = 0.0
@@ -197,10 +204,16 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
             remaining_capacity = max(0.0, float(installable_cap) - float(installed_base))
             new_installs = min(float(planned_installs), float(remaining_capacity))
 
-            avg_installed = float(installed_base) + 0.5 * float(new_installs)
             installed_base = float(installed_base) + float(new_installs)
 
-            revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
+            if model_type == "Kit Sale (Payback Pricing)":
+                annual_value_created = float(total_value_created) * 4.0
+                rev_per_kit = float(annual_value_created) * float(target_payback_years)
+                revenue = float(new_installs) * float(rev_per_kit) / 1e6
+            else:
+                rev_per_shipset = float(total_value_created) * float(split_pct)
+                avg_installed = float(installed_base) - 0.5 * float(new_installs)
+                revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
 
             cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
             cogs = float(new_installs) * float(cogs_per_kit) / 1e6
@@ -305,8 +318,20 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
     }
 
 
-def build_baseline_params() -> Dict[str, Any]:
+def build_baseline_params(model_type_override: str | None = None) -> Dict[str, Any]:
     st.sidebar.header("Baseline Inputs")
+
+    model_type_options = ["Leasing (Split Savings)", "Kit Sale (Payback Pricing)"]
+    if model_type_override in model_type_options:
+        st.session_state["sense_model_type"] = str(model_type_override)
+
+    model_type = st.sidebar.radio(
+        "Business Model",
+        options=model_type_options,
+        horizontal=True,
+        key="sense_model_type",
+        index=(model_type_options.index(str(model_type_override)) if model_type_override in model_type_options else 0),
+    )
 
     st.sidebar.header("Fuel")
     fuel_saving_pct = st.sidebar.slider("Fuel Savings % per Aircraft", min_value=5.0, max_value=15.0, value=9.5, step=0.5) / 100
@@ -320,11 +345,20 @@ def build_baseline_params() -> Dict[str, Any]:
     tam_penetration_pct = st.sidebar.slider("TAM Penetration (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 
     st.sidebar.header("Commercial")
-    fuel_savings_split_to_tamarack = st.sidebar.slider("Fuel Savings Split to Tamarack (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+    if model_type == "Kit Sale (Payback Pricing)":
+        target_payback_years = st.sidebar.slider("Target Airline Payback (Years)", min_value=1.0, max_value=5.0, value=2.5, step=0.25)
+        fuel_savings_split_to_tamarack = 0.50
+    else:
+        target_payback_years = 2.5
+        fuel_savings_split_to_tamarack = st.sidebar.slider("Fuel Savings Split to Tamarack (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
 
-    st.sidebar.header("CORSIA")
-    corsia_split = st.sidebar.slider("CORSIA Exposure (Share of Ops) (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
-    carbon_price = st.sidebar.slider("Carbon Price ($/tCO2)", min_value=0.0, max_value=200.0, value=30.0, step=5.0)
+    if model_type == "Kit Sale (Payback Pricing)":
+        corsia_split = 0.0
+        carbon_price = 0.0
+    else:
+        st.sidebar.header("CORSIA")
+        corsia_split = st.sidebar.slider("CORSIA Exposure (Share of Ops) (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+        carbon_price = st.sidebar.slider("Carbon Price ($/tCO2)", min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
     st.sidebar.header("Fleet Dynamics")
     fleet_retirements_per_month = st.sidebar.slider("Fleet Retirements (Aircraft per Month)", min_value=0, max_value=50, value=10, step=1)
@@ -365,6 +399,7 @@ def build_baseline_params() -> Dict[str, Any]:
     opex = {2026: 50, 2027: 40, 2028: 40, 2029: 35, 2030: 25, 2031: 20, 2032: 18, 2033: 15, 2034: 15, 2035: 15}
 
     return {
+        "model_type": str(model_type),
         "fuel_inflation": float(fuel_inflation),
         "base_fuel_price": float(base_fuel_price),
         "block_hours": float(block_hours),
@@ -373,6 +408,7 @@ def build_baseline_params() -> Dict[str, Any]:
         "base_cogs": float(base_cogs),
         "fuel_saving_pct": float(fuel_saving_pct),
         "fuel_savings_split_to_tamarack": float(fuel_savings_split_to_tamarack),
+        "target_payback_years": float(target_payback_years),
         "corsia_split": float(corsia_split),
         "carbon_price": float(carbon_price),
         "cert_readiness_cost": float(cert_readiness_cost),
@@ -403,11 +439,12 @@ def build_baseline_params() -> Dict[str, Any]:
 
 
 def build_driver_catalog(baseline: Dict[str, Any]) -> List[DriverSpec]:
-    return [
+    model_type = str(baseline.get("model_type", "Leasing (Split Savings)"))
+
+    common = [
         DriverSpec("wacc", "WACC (%)", "%", "percent"),
         DriverSpec("base_fuel_price", "Fuel Price ($/gal)", "$/gal", "float"),
         DriverSpec("cert_duration_years", "Certification Duration (Years)", "years", "float"),
-        DriverSpec("fuel_savings_split_to_tamarack", "Fuel Savings Split to Tamarack (%)", "%", "percent"),
         DriverSpec("fuel_inflation", "Annual Fuel Inflation (%)", "%", "percent"),
         DriverSpec("block_hours", "Block Hours per Aircraft per Year", "hours", "int"),
         DriverSpec("base_fuel_burn_gal_per_hour", "Base Fuel Burn (gal/hour)", "gal/hour", "int"),
@@ -424,6 +461,11 @@ def build_driver_catalog(baseline: Dict[str, Any]) -> List[DriverSpec]:
         DriverSpec("tax_rate", "Income Tax Rate", "%", "percent"),
         DriverSpec("terminal_growth", "Terminal Growth Rate", "%", "percent"),
     ]
+
+    if model_type == "Kit Sale (Payback Pricing)":
+        return common + [DriverSpec("target_payback_years", "Target Payback (Years)", "years", "float")]
+
+    return common + [DriverSpec("fuel_savings_split_to_tamarack", "Fuel Savings Split to Tamarack (%)", "%", "percent")]
 
 
 def _grid_values(spec: DriverSpec, low_disp: float, high_disp: float, points: int) -> List[float]:
@@ -475,6 +517,7 @@ def _driver_disp_bounds(spec: DriverSpec) -> Tuple[float | None, float | None]:
         "tam_shipsets": (1000.0, 10000.0),
         "tam_penetration_pct": (0.0, 100.0),
         "fuel_savings_split_to_tamarack": (0.0, 100.0),
+        "target_payback_years": (1.0, 5.0),
         "cert_duration_years": (0.25, 5.0),
         "cert_readiness_cost": (100.0, 300.0),
         "inventory_kits_pre_install": (50.0, 200.0),
@@ -851,12 +894,18 @@ def plot_3d_slices(
     return fig3d
 
 
-def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_title: bool = True) -> None:
+def render_sensitivity_app(
+    baseline_params: Dict[str, Any] | None = None,
+    show_title: bool = True,
+    model_type_override: str | None = None,
+) -> None:
     if show_title:
         st.title("Tamarack Aerospace – 3-Driver Sensitivity Study")
 
     if baseline_params is None:
-        baseline_params = build_baseline_params()
+        baseline_params = build_baseline_params(model_type_override=model_type_override)
+
+    model_type = str(baseline_params.get("model_type", "Leasing (Split Savings)"))
 
     st.header("Baseline Outputs")
     baseline_outputs = run_model(baseline_params)
@@ -866,6 +915,60 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
     })
     baseline_out_df["Baseline"] = baseline_out_df["Baseline"].astype(float).round(1)
     st.dataframe(baseline_out_df, hide_index=True, use_container_width=False)
+
+    if model_type == "Kit Sale (Payback Pricing)":
+        years = list(range(2026, 2036))
+
+        revenue_start_q_index = int(baseline_params["revenue_start_q_index"])
+        revenue_start_year = int(baseline_params["revenue_start_year"])
+
+        fuel_inflation = float(baseline_params["fuel_inflation"])
+        base_fuel_price = float(baseline_params["base_fuel_price"])
+        block_hours = float(baseline_params["block_hours"])
+        base_fuel_burn_gal_per_hour = float(baseline_params["base_fuel_burn_gal_per_hour"])
+        fuel_saving_pct = float(baseline_params["fuel_saving_pct"])
+
+        corsia_split = float(baseline_params.get("corsia_split", 0.0))
+        carbon_price = float(baseline_params.get("carbon_price", 0.0))
+
+        corsia_split = 0.0
+        carbon_price = 0.0
+
+        target_payback_years = float(baseline_params.get("target_payback_years", 2.5))
+
+        annual_kit_price: Dict[int, float] = {int(y): np.nan for y in years}
+        for i in range(len(years) * 4):
+            yr = years[0] + (i // 4)
+            if i < revenue_start_q_index:
+                continue
+
+            year_idx = int(yr - revenue_start_year)
+            fuel_price = float(base_fuel_price) * float((1 + float(fuel_inflation)) ** int(year_idx))
+
+            quarter_block_hours = float(block_hours) / 4.0
+            quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
+            quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
+
+            quarter_gallons_burn = quarter_block_hours * float(base_fuel_burn_gal_per_hour)
+            gallons_saved = quarter_gallons_burn * float(fuel_saving_pct)
+            fuel_saved_tonnes = gallons_saved * 0.00304
+            co2_avoided_t = fuel_saved_tonnes * 3.16
+            corsia_value = co2_avoided_t * float(corsia_split) * float(carbon_price)
+
+            total_value_created = float(quarter_saving) + float(corsia_value)
+            annual_value_created = float(total_value_created) * 4.0
+            kit_price = float(annual_value_created) * float(target_payback_years)
+
+            annual_kit_price[int(yr)] = float(kit_price)
+
+        kit_price_df = pd.DataFrame({
+            "Year": list(annual_kit_price.keys()),
+            "Kit Price ($/kit)": list(annual_kit_price.values()),
+        })
+        kit_price_df["Kit Price ($/kit)"] = kit_price_df["Kit Price ($/kit)"].astype(float).round(0)
+
+        st.subheader("Kit Price by Year")
+        st.dataframe(kit_price_df, hide_index=True, use_container_width=False)
 
     st.header("Sensitivity Study")
 
@@ -880,6 +983,7 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
         "tam_shipsets": "Market",
         "tam_penetration_pct": "Market",
         "fuel_savings_split_to_tamarack": "Commercial",
+        "target_payback_years": "Commercial",
         "cert_duration_years": "Program",
         "inventory_kits_pre_install": "Program",
         "cert_readiness_cost": "Financial",
@@ -904,11 +1008,12 @@ def render_sensitivity_app(baseline_params: Dict[str, Any] | None = None, show_t
             unsafe_allow_html=True,
         )
         d1_options = [d.key for d in drivers]
+        d1_default = "target_payback_years" if model_type == "Kit Sale (Payback Pricing)" else "fuel_savings_split_to_tamarack"
         d1_key = st.selectbox(
             "Driver 1",
             options=d1_options,
             format_func=lambda k: driver_labels[k],
-            index=_key_index(d1_options, "fuel_savings_split_to_tamarack", 0),
+            index=_key_index(d1_options, d1_default, 0),
             label_visibility="collapsed",
         )
     with col_b:
