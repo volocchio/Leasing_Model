@@ -86,6 +86,11 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
         corsia_split = 0.0
         carbon_price = 0.0
 
+    overhaul_extension_pct = float(params.get("overhaul_extension_pct", 0.10))
+    shop_visit_cost_m = float(params.get("shop_visit_cost_m", 6.0))
+    base_tbo_hours = float(params.get("base_tbo_hours", 18000))
+    overhaul_split = float(params.get("overhaul_split", 0.50))
+
     inventory_kits_pre_install = int(params["inventory_kits_pre_install"])
     tam_shipsets = int(params["tam_shipsets"])
     tam_penetration_pct = float(params.get("tam_penetration_pct", 1.0))
@@ -182,7 +187,13 @@ def run_model(params: Dict[str, Any]) -> Dict[str, float]:
             fuel_saved_tonnes = gallons_saved * 0.00304
             co2_avoided_t = fuel_saved_tonnes * 3.16
             corsia_value = 0.0 if model_type == "Kit Sale (Payback Pricing)" else (co2_avoided_t * float(corsia_split) * float(carbon_price))
-            total_value_created = quarter_saving + corsia_value
+
+            base_overhaul_cost_per_hour = (float(shop_visit_cost_m) * 1e6 * 2) / float(base_tbo_hours)
+            hourly_overhaul_savings = base_overhaul_cost_per_hour * float(overhaul_extension_pct)
+            quarter_overhaul_value = quarter_block_hours * hourly_overhaul_savings
+            overhaul_value = quarter_overhaul_value * float(overhaul_split)
+
+            total_value_created = quarter_saving + corsia_value + overhaul_value
 
             rev_q_idx = int(i - int(revenue_start_q_index))
             planned_installs = 0.0
@@ -360,6 +371,12 @@ def build_baseline_params(model_type_override: str | None = None) -> Dict[str, A
         corsia_split = st.sidebar.slider("CORSIA Exposure (Share of Ops) (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
         carbon_price = st.sidebar.slider("Carbon Price ($/tCO2)", min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
+    st.sidebar.header("Engine Overhaul")
+    overhaul_extension_pct = st.sidebar.slider("TBO Extension from Lower Temps (%)", min_value=5.0, max_value=20.0, value=10.0, step=1.0) / 100
+    shop_visit_cost_m = st.sidebar.slider("Shop Visit Cost per Engine ($M)", min_value=3.0, max_value=12.0, value=6.0, step=0.5)
+    base_tbo_hours = st.sidebar.slider("Base Time Between Overhauls (Hours)", min_value=10000, max_value=25000, value=18000, step=1000)
+    overhaul_split = st.sidebar.slider("Overhaul Savings Split to Tamarack (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+
     st.sidebar.header("Fleet Dynamics")
     fleet_retirements_per_month = st.sidebar.slider("Fleet Retirements (Aircraft per Month)", min_value=0, max_value=50, value=10, step=1)
     include_forward_fit = st.sidebar.checkbox("Include Forward-Fit Aircraft Entering Market", value=False)
@@ -411,6 +428,10 @@ def build_baseline_params(model_type_override: str | None = None) -> Dict[str, A
         "target_payback_years": float(target_payback_years),
         "corsia_split": float(corsia_split),
         "carbon_price": float(carbon_price),
+        "overhaul_extension_pct": float(overhaul_extension_pct),
+        "shop_visit_cost_m": float(shop_visit_cost_m),
+        "base_tbo_hours": float(base_tbo_hours),
+        "overhaul_split": float(overhaul_split),
         "cert_readiness_cost": float(cert_readiness_cost),
         "cert_duration_years": float(cert_duration_years),
         "cert_duration_quarters": int(cert_duration_quarters),
@@ -460,6 +481,10 @@ def build_driver_catalog(baseline: Dict[str, Any]) -> List[DriverSpec]:
         DriverSpec("debt_term_years", "Debt Term", "years", "int"),
         DriverSpec("tax_rate", "Income Tax Rate", "%", "percent"),
         DriverSpec("terminal_growth", "Terminal Growth Rate", "%", "percent"),
+        DriverSpec("overhaul_extension_pct", "TBO Extension from Lower Temps (%)", "%", "percent"),
+        DriverSpec("shop_visit_cost_m", "Shop Visit Cost per Engine ($M)", "$M", "float"),
+        DriverSpec("base_tbo_hours", "Base Time Between Overhauls (Hours)", "hours", "int"),
+        DriverSpec("overhaul_split", "Overhaul Savings Split to Tamarack (%)", "%", "percent"),
     ]
 
     if model_type == "Kit Sale (Payback Pricing)":
@@ -528,6 +553,10 @@ def _driver_disp_bounds(spec: DriverSpec) -> Tuple[float | None, float | None]:
         "tax_rate": (0.0, 40.0),
         "wacc": (0.0, 30.0),
         "terminal_growth": (-2.0, 8.0),
+        "overhaul_extension_pct": (5.0, 20.0),
+        "shop_visit_cost_m": (3.0, 12.0),
+        "base_tbo_hours": (10000.0, 25000.0),
+        "overhaul_split": (0.0, 100.0),
     }
 
     if spec.key not in bounds_by_key:
@@ -820,7 +849,7 @@ def plot_3d_slices(
 
     p_x0 = _fig_xy(x0, y0, z0)
     p_x1 = _fig_xy(x1, y0, z0)
-    p_y0 = _fig_xy(x1, y0, z0)
+    p_y0 = _fig_xy(x0, y1, z0)
     p_y1 = _fig_xy(x1, y1, z0)
     p_z0 = _fig_xy(x1, y1, z0)
     p_z1 = _fig_xy(x1, y1, z1)

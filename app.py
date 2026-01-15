@@ -141,6 +141,12 @@ else:
     corsia_split = st.sidebar.slider('CORSIA Exposure (Share to Tamarack) (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
     carbon_price = st.sidebar.slider('Carbon Price ($/tCO2)', min_value=0.0, max_value=200.0, value=30.0, step=5.0)
 
+st.sidebar.header('Engine Overhaul')
+overhaul_extension_pct = st.sidebar.slider('TBO Extension from Lower Temps (%)', min_value=5.0, max_value=20.0, value=10.0, step=1.0) / 100
+shop_visit_cost_m = st.sidebar.slider('Shop Visit Cost per Engine ($M)', min_value=3.0, max_value=12.0, value=6.0, step=0.5)
+base_tbo_hours = st.sidebar.slider('Base Time Between Overhauls (Hours)', min_value=10000, max_value=25000, value=18000, step=1000)
+overhaul_split = st.sidebar.slider('Overhaul Savings Split to Tamarack (%)', min_value=0.0, max_value=100.0, value=50.0, step=1.0) / 100
+
 st.sidebar.header('Fleet Dynamics')
 fleet_retirements_per_month = st.sidebar.slider('Fleet Retirements (Aircraft per Month)', min_value=0, max_value=50, value=0, step=1)
 include_forward_fit = st.sidebar.checkbox('Include Forward-Fit Aircraft Entering Market', value=False)
@@ -200,6 +206,13 @@ corsia_assumption_rows = [] if model_type == 'Kit Sale (Payback Pricing)' else [
     {'Assumption': 'Carbon Price', 'Value': f"{carbon_price:.2f}", 'Units': '$/tCO2', 'Type': 'Slider', 'Notes': 'Used to value avoided CORSIA compliance cost (fuel savings + avoided CORSIA = total value created)'},
 ]
 
+engine_overhaul_assumption_rows = [
+    {'Assumption': 'TBO Extension from Lower Temps', 'Value': f"{overhaul_extension_pct * 100:.1f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent extension in time between overhauls due to lower takeoff power/temperatures'},
+    {'Assumption': 'Shop Visit Cost per Engine', 'Value': f"{shop_visit_cost_m:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': 'Cost of hot section inspection or performance restoration per engine'},
+    {'Assumption': 'Base Time Between Overhauls', 'Value': f"{int(base_tbo_hours):,}", 'Units': 'Hours', 'Type': 'Slider', 'Notes': 'Baseline flight hours between engine shop visits'},
+    {'Assumption': 'Overhaul Savings Split to Tamarack', 'Value': f"{overhaul_split * 100:.1f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Share of engine overhaul savings paid to Tamarack'},
+]
+
 assumptions_rows = [
     {'Assumption': 'Annual Fuel Inflation', 'Value': f"{fuel_inflation * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Applied to base fuel price starting in the first revenue year'},
     {'Assumption': 'Base Fuel Price (First Revenue Year)', 'Value': f"{base_fuel_price:.2f}", 'Units': '$/gal', 'Type': 'Slider', 'Notes': f"Base fuel price used in {revenue_start_year}"},
@@ -210,6 +223,7 @@ assumptions_rows = [
     {'Assumption': 'Fuel Savings % per Aircraft', 'Value': f"{fuel_saving_pct * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel spend saved'},
     ({'Assumption': 'Target Airline Payback', 'Value': f"{float(target_payback_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': 'Kit price is set so the airline recovers cost via fuel savings over the target payback period'} if model_type == 'Kit Sale (Payback Pricing)' else {'Assumption': 'Fuel Savings Split to Tamarack', 'Value': f"{fuel_savings_split_to_tamarack * 100:.2f}%", 'Units': '%', 'Type': 'Slider', 'Notes': 'Percent of annual fuel savings paid to Tamarack'}),
     *corsia_assumption_rows,
+    *engine_overhaul_assumption_rows,
     {'Assumption': 'Certification Duration', 'Value': f"{float(cert_duration_years):.2f}", 'Units': 'Years', 'Type': 'Slider', 'Notes': f"{cert_duration_quarters} quarters; go-live is {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Equity', 'Value': f"{cert_readiness_cost:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Used first to fund certification / inventory outflows prior to {revenue_start_year}Q{revenue_start_quarter}"},
     {'Assumption': 'Max Debt Available', 'Value': f"{debt_amount:.1f}", 'Units': '$M', 'Type': 'Slider', 'Notes': f"Debt facility cap; model draws only what is needed prior to {revenue_start_year}Q{revenue_start_quarter}"},
@@ -329,7 +343,13 @@ for i in range(len(years) * 4):
         fuel_saved_tonnes = gallons_saved * 0.00304
         co2_avoided_t = fuel_saved_tonnes * 3.16
         corsia_value = 0.0 if model_type == 'Kit Sale (Payback Pricing)' else (co2_avoided_t * float(corsia_split) * float(carbon_price))
-        total_value_created = quarter_saving + corsia_value
+
+        base_overhaul_cost_per_hour = (float(shop_visit_cost_m) * 1e6 * 2) / float(base_tbo_hours)
+        hourly_overhaul_savings = base_overhaul_cost_per_hour * float(overhaul_extension_pct)
+        quarter_overhaul_value = quarter_block_hours * hourly_overhaul_savings
+        overhaul_value = quarter_overhaul_value * float(overhaul_split)
+
+        total_value_created = quarter_saving + corsia_value + overhaul_value
 
         rev_q_idx = int(i - int(revenue_start_q_index))
         planned_installs = 0.0
