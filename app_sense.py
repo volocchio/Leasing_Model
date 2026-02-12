@@ -15,6 +15,14 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D, proj3d
 
+from model_engine import (
+    run_model_summary,
+    compute_derived_params,
+    DEFAULT_OPEX,
+    DOWNLOAD_BUTTON_CSS,
+    TABS_CSS,
+)
+
 
 @dataclass(frozen=True)
 class DriverSpec:
@@ -57,276 +65,8 @@ def _disp_key(spec: "DriverSpec", v: float) -> float:
 
 
 def run_model(params: Dict[str, Any]) -> Dict[str, float]:
-    years = list(range(2026, 2036))
-
-    model_type = str(params.get("model_type", "Leasing (Split Savings)"))
-
-    revenue_start_q_index = int(params["revenue_start_q_index"])
-    inventory_purchase_q_index = int(params["inventory_purchase_q_index"])
-    revenue_start_year = int(params["revenue_start_year"])
-
-    fuel_inflation = float(params["fuel_inflation"])
-    cogs_inflation = float(params["cogs_inflation"])
-
-    base_fuel_price = float(params["base_fuel_price"])
-    base_cogs = float(params["base_cogs"])
-
-    block_hours = float(params["block_hours"])
-    base_fuel_burn_gal_per_hour = float(params["base_fuel_burn_gal_per_hour"])
-
-    fuel_saving_pct = float(params["fuel_saving_pct"])
-    split_pct = float(params["fuel_savings_split_to_tamarack"])
-
-    target_payback_years = float(params.get("target_payback_years", 2.5))
-
-    corsia_split = float(params.get("corsia_split", 0.0))
-    carbon_price = float(params.get("carbon_price", 0.0))
-
-    if model_type == "Kit Sale (Payback Pricing)":
-        corsia_split = 0.0
-        carbon_price = 0.0
-
-    overhaul_extension_pct = float(params.get("overhaul_extension_pct", 0.10))
-    shop_visit_cost_m = float(params.get("shop_visit_cost_m", 6.0))
-    base_tbo_hours = float(params.get("base_tbo_hours", 18000))
-    overhaul_split = float(params.get("overhaul_split", 0.50))
-
-    inventory_kits_pre_install = int(params["inventory_kits_pre_install"])
-    tam_shipsets = int(params["tam_shipsets"])
-    tam_penetration_pct = float(params.get("tam_penetration_pct", 1.0))
-
-    fleet_retirements_per_month = float(params.get("fleet_retirements_per_month", 0.0))
-    include_forward_fit = bool(params.get("include_forward_fit", False))
-    forward_fit_per_month = float(params.get("forward_fit_per_month", 0.0))
-
-    q1_installs = int(params["q1_installs"])
-    q2_installs = int(params["q2_installs"])
-    q3_installs = int(params["q3_installs"])
-    q4_installs = int(params["q4_installs"])
-
-    cert_readiness_cost = float(params["cert_readiness_cost"])
-    cert_duration_quarters = int(params["cert_duration_quarters"])
-    cert_spend_per_quarter = (float(cert_readiness_cost) / float(cert_duration_quarters)) if int(cert_duration_quarters) > 0 else 0.0
-
-    debt_amount = float(params["debt_amount"])
-    debt_apr = float(params["debt_apr"])
-    debt_term_years = int(params["debt_term_years"])
-
-    tax_rate = float(params["tax_rate"])
-    wacc = float(params["wacc"])
-    terminal_growth = float(params["terminal_growth"])
-
-    opex = dict(params["opex"])
-
-    annual_data: Dict[int, Dict[str, float]] = {}
-
-    fleet_size = float(tam_shipsets)
-    installed_base = 0.0
-    cum_cash = 0.0
-
-    debt_balance = 0.0
-    debt_draw_remaining = float(debt_amount)
-    debt_drawn_total = 0.0
-
-    investor_cum_cf = 0.0
-    equity_cum_cf = 0.0
-
-    equity_reserve = float(cert_readiness_cost)
-    equity_amount = float(cert_readiness_cost)
-
-    debt_rate_q = float(debt_apr) / 4.0
-    term_quarters = int(debt_term_years) * 4
-    quarterly_debt_payment = None
-
-    year_sums = None
-    year_taxable_income = 0.0
-
-    for i in range(len(years) * 4):
-        yr = years[0] + (i // 4)
-        qtr = (i % 4) + 1
-
-        if year_sums is None:
-            year_sums = {
-                "EBITDA": 0.0,
-                "CapExInv": 0.0,
-                "Taxes": 0.0,
-            }
-            year_taxable_income = 0.0
-
-        capex = 0.0
-        inventory = 0.0
-
-        fleet_beg = float(fleet_size)
-        installed_beg = float(installed_base)
-
-        retire_q = float(fleet_retirements_per_month) * 3.0
-        retire_q = min(float(retire_q), float(fleet_beg)) if float(fleet_beg) > 0 else 0.0
-        forward_fit_q = (float(forward_fit_per_month) * 3.0) if bool(include_forward_fit) else 0.0
-
-        fleet_size = max(0.0, float(fleet_beg) - float(retire_q) + float(forward_fit_q))
-        installed_base = float(installed_beg)
-
-        installable_cap = float(fleet_size) * float(tam_penetration_pct)
-
-        if i < revenue_start_q_index:
-            new_installs = 0.0
-            revenue = 0.0
-            cogs = 0.0
-            if i < int(cert_duration_quarters):
-                capex = float(cert_spend_per_quarter)
-            if i == int(inventory_purchase_q_index):
-                inventory = float(0.25 * inventory_kits_pre_install * base_cogs / 1e6)
-        else:
-            year_idx = int(yr - revenue_start_year)
-            fuel_price = float(base_fuel_price) * float((1 + float(fuel_inflation)) ** int(year_idx))
-            quarter_block_hours = float(block_hours) / 4.0
-            quarter_fuel_spend = quarter_block_hours * float(base_fuel_burn_gal_per_hour) * float(fuel_price)
-            quarter_saving = quarter_fuel_spend * float(fuel_saving_pct)
-            quarter_gallons_burn = quarter_block_hours * float(base_fuel_burn_gal_per_hour)
-            gallons_saved = quarter_gallons_burn * float(fuel_saving_pct)
-            fuel_saved_tonnes = gallons_saved * 0.00304
-            co2_avoided_t = fuel_saved_tonnes * 3.16
-            corsia_value = 0.0 if model_type == "Kit Sale (Payback Pricing)" else (co2_avoided_t * float(corsia_split) * float(carbon_price))
-
-            base_overhaul_cost_per_hour = (float(shop_visit_cost_m) * 1e6 * 2) / float(base_tbo_hours)
-            hourly_overhaul_savings = base_overhaul_cost_per_hour * float(overhaul_extension_pct)
-            quarter_overhaul_value = quarter_block_hours * hourly_overhaul_savings
-            overhaul_value = quarter_overhaul_value * float(overhaul_split)
-
-            total_value_created = quarter_saving + corsia_value + overhaul_value
-
-            rev_q_idx = int(i - int(revenue_start_q_index))
-            planned_installs = 0.0
-            if rev_q_idx == 0:
-                planned_installs = float(q1_installs)
-            elif rev_q_idx == 1:
-                planned_installs = float(q2_installs)
-            elif rev_q_idx == 2:
-                planned_installs = float(q3_installs)
-            elif rev_q_idx == 3:
-                planned_installs = float(q4_installs)
-            else:
-                revenue_year = int(rev_q_idx // 4)
-                if revenue_year == 1:
-                    planned_installs = 910.0 / 4.0
-                else:
-                    planned_installs = 1040.0 / 4.0
-
-            remaining_capacity = max(0.0, float(installable_cap) - float(installed_base))
-            new_installs = min(float(planned_installs), float(remaining_capacity))
-
-            installed_base = float(installed_base) + float(new_installs)
-
-            if model_type == "Kit Sale (Payback Pricing)":
-                annual_value_created = float(total_value_created) * 4.0
-                rev_per_kit = float(annual_value_created) * float(target_payback_years)
-                revenue = float(new_installs) * float(rev_per_kit) / 1e6
-            else:
-                rev_per_shipset = float(total_value_created) * float(split_pct)
-                avg_installed = float(installed_base) - 0.5 * float(new_installs)
-                revenue = float(avg_installed) * float(rev_per_shipset) / 1e6
-
-            cogs_per_kit = float(base_cogs) * float((1 + float(cogs_inflation)) ** int(year_idx))
-            cogs = float(new_installs) * float(cogs_per_kit) / 1e6
-
-        gross_profit = float(revenue) - float(cogs)
-        opex_q = float(opex.get(int(yr), 15)) / 4.0
-        ebitda = float(gross_profit) - float(opex_q)
-        total_outflow = float(capex) + float(inventory)
-
-        equity_contribution = 0.0
-        debt_draw = 0.0
-        if i < revenue_start_q_index:
-            equity_contribution = min(float(equity_reserve), float(total_outflow))
-            equity_reserve -= float(equity_contribution)
-            remaining_outflow = float(total_outflow) - float(equity_contribution)
-            if float(debt_draw_remaining) > 0 and float(remaining_outflow) > 0:
-                debt_draw = min(float(debt_draw_remaining), float(remaining_outflow))
-                debt_draw_remaining -= float(debt_draw)
-                debt_drawn_total += float(debt_draw)
-
-        debt_balance = float(debt_balance) + float(debt_draw)
-
-        debt_interest = 0.0
-        debt_payment = 0.0
-        if i >= revenue_start_q_index and float(debt_balance) > 0:
-            if quarterly_debt_payment is None:
-                if float(debt_rate_q) == 0:
-                    quarterly_debt_payment = (float(debt_balance) / float(term_quarters)) if int(term_quarters) > 0 else 0.0
-                else:
-                    quarterly_debt_payment = float(debt_balance) * float(debt_rate_q) / (1 - (1 + float(debt_rate_q)) ** (-float(term_quarters)))
-
-            debt_interest = float(debt_balance) * float(debt_rate_q)
-            debt_payment = min(float(quarterly_debt_payment), float(debt_balance) + float(debt_interest))
-            debt_principal = max(0.0, min(float(debt_balance), float(debt_payment) - float(debt_interest)))
-            debt_balance = max(0.0, float(debt_balance) - float(debt_principal))
-
-        taxable_income_q = float(ebitda) - float(debt_interest)
-        year_taxable_income += float(taxable_income_q)
-
-        taxes = 0.0
-        if int(qtr) == 4:
-            taxes = max(0.0, float(year_taxable_income)) * float(tax_rate)
-
-        fcf_after_tax = float(ebitda) - float(taxes) - float(total_outflow)
-        net_cash_after_debt = float(fcf_after_tax) + float(debt_draw) - float(debt_payment)
-        net_cash_change = float(net_cash_after_debt) + float(equity_contribution)
-        cum_cash += float(net_cash_change)
-
-        investor_cf = (-float(debt_draw)) + float(debt_payment)
-        investor_cum_cf += float(investor_cf)
-
-        if i < revenue_start_q_index:
-            equity_cf = -float(equity_contribution)
-        else:
-            equity_cf = float(net_cash_after_debt)
-
-        equity_cum_cf += float(equity_cf)
-
-        year_sums["EBITDA"] += float(ebitda)
-        year_sums["CapExInv"] += float(total_outflow)
-        year_sums["Taxes"] += float(taxes)
-
-        if int(qtr) == 4:
-            annual_data[int(yr)] = {
-                "EBITDA": float(year_sums["EBITDA"]),
-                "CapExInv": float(year_sums["CapExInv"]),
-                "Taxes": float(year_sums["Taxes"]),
-            }
-            year_sums = None
-
-    df = pd.DataFrame.from_dict(annual_data, orient="index")
-    df.index.name = "Year"
-
-    unlevered_taxes = (df["EBITDA"].clip(lower=0.0) * float(tax_rate)).astype(float)
-    unlevered_fcf = (df["EBITDA"].astype(float) - unlevered_taxes - df["CapExInv"].astype(float)).astype(float)
-
-    discount_year0 = int(df.index.min())
-    discount_t = (df.index - discount_year0 + 1).astype(int)
-    discount_factor = pd.Series((1 / (1 + float(wacc)) ** discount_t).astype(float), index=df.index)
-
-    pv_fcf = (unlevered_fcf * discount_factor).astype(float)
-
-    tv = np.nan
-    pv_tv = np.nan
-    if float(wacc) > float(terminal_growth):
-        tv = float(unlevered_fcf.iloc[-1]) * (1 + float(terminal_growth)) / (float(wacc) - float(terminal_growth))
-        pv_tv = tv * float(discount_factor.iloc[-1])
-
-    pv_explicit = float(pv_fcf.sum())
-    enterprise_value = pv_explicit + (float(pv_tv) if not np.isnan(pv_tv) else 0.0)
-
-    equity_roi = (equity_cum_cf / float(equity_amount)) if float(equity_amount) > 0 else 0.0
-    investor_roi = (investor_cum_cf / float(debt_drawn_total)) if float(debt_drawn_total) > 0 else 0.0
-
-    return {
-        "Enterprise Value ($M)": float(enterprise_value),
-        "PV Explicit FCF ($M)": float(pv_explicit),
-        "PV Terminal Value ($M)": float(0.0 if np.isnan(pv_tv) else float(pv_tv)),
-        "Equity ROI (%)": float(equity_roi * 100.0),
-        "Debt Investor ROI (%)": float(investor_roi * 100.0),
-        "Ending Cash ($M)": float(cum_cash),
-    }
+    """Delegate to the shared engine (kept for backward compatibility)."""
+    return run_model_summary(params)
 
 
 def build_baseline_params(model_type_override: str | None = None) -> Dict[str, Any]:
@@ -1239,49 +979,7 @@ def render_sensitivity_app(
         f"**Driver 3 (Tabs/Slices):** {d3.label}"
     )
 
-    st.markdown(
-        """
-<style>
-div[data-testid="stTabs"] div[data-baseweb="tab-list"],
-div[data-testid="stTabs"] div[data-baseweb="tab-list"]:has(button[role="tab"]),
-div[data-testid="stTabs"] div[data-baseweb="tab-list"]:has(button[data-baseweb="tab"]) {
-  gap: 12px !important;
-  padding: 10px 10px !important;
-  background: #FFF1D6 !important;
-  border: 3px solid #F97316 !important;
-  border-radius: 14px !important;
-}
-
-div[data-testid="stTabs"] button[role="tab"],
-div[data-testid="stTabs"] button[data-baseweb="tab"] {
-  font-weight: 900 !important;
-  font-size: 1.02rem !important;
-  color: #7C2D12 !important;
-  border: 2px solid #FDBA74 !important;
-  border-radius: 12px !important;
-  background: #FFFFFF !important;
-  padding: 10px 16px !important;
-}
-
-div[data-testid="stTabs"] button[role="tab"]:hover,
-div[data-testid="stTabs"] button[data-baseweb="tab"]:hover {
-  border-color: #F97316 !important;
-  background: #FFF7ED !important;
-}
-
-div[data-testid="stTabs"] button[role="tab"][aria-selected="true"],
-div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
-  background: #FFEDD5 !important;
-  border-color: #9A3412 !important;
-  transform: translateY(-1px);
-  box-shadow:
-    0 0 0 5px rgba(154, 52, 18, 0.18),
-    inset 0 -4px 0 0 #9A3412;
-}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(TABS_CSS, unsafe_allow_html=True)
 
     d3_disp_vals = [_disp_key(d3, float(v)) for v in d3_vals]
     seen = set()
@@ -1382,33 +1080,7 @@ div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
         pdf.savefig(fig_assumptions, bbox_inches="tight")
         plt.close(fig_assumptions)
 
-    st.markdown(
-        """
-<style>
-div[data-testid="stDownloadButton"] > button {
-  width: auto;
-  min-width: 360px;
-  background: #1D4ED8 !important;
-  color: #FFFFFF !important;
-  border: 2px solid #1E40AF !important;
-  border-radius: 12px !important;
-  padding: 0.85rem 1.25rem !important;
-  font-size: 1.15rem !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.2px !important;
-  box-shadow: 0 10px 18px rgba(29, 78, 216, 0.18) !important;
-}
-div[data-testid="stDownloadButton"] > button:hover {
-  background: #1E40AF !important;
-  border-color: #1E3A8A !important;
-}
-div[data-testid="stDownloadButton"] > button:focus {
-  box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.25) !important;
-}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(DOWNLOAD_BUTTON_CSS, unsafe_allow_html=True)
     _, c_btn, _ = st.columns([1, 2, 1])
     with c_btn:
         st.download_button(
